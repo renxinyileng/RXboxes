@@ -1,0 +1,16 @@
+{
+  CoordinatorLayout;
+  layout_height="fill";
+  layout_width="fill";
+  {
+    TextView;
+    gravity="center";
+    text="Hello World";
+    layout_height="fill";
+    layout_width="fill";
+  };
+};
+--这是一个Android布局文件，位于RXtestbox项目的assets文件夹下，名为layout.aly。
+--其中包含一个CoordinatorLayout，高度和宽度都填充父布局。
+--在CoordinatorLayout中还包含一个TextView，文本居中显示“Hello World”，高度和宽度也都填充父布局。
+

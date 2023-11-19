@@ -1,0 +1,53 @@
+--appname = "RX盒子"
+--appver = "1.0.1"
+--appcode = "20221216"
+--appsdk = "15"
+--packagename = "rx.team.renxinyileng.box"
+--theme = "android.R.style.Theme_DeviceDefault_Light"
+--debugmode = true
+--user_permission = {
+--    "ACCESS_BACKGROUND_LOCATION",
+--    "ACCESS_COARSE_LOCATION",
+--    "ACCESS_FINE_LOCATION",
+--    "ACCESS_MEDIA_LOCATION",
+--    "ACCESS_NETWORK_STATE",
+--    "ACCESS_WIFI_STATE",
+--    "ANSWER_PHONE_CALLS",
+--    "BATTERY_STATS",
+--    "BIND_ACCESSIBILITY_SERVICE",
+--    "BLUETOOTH",
+--    "BLUETOOTH_ADMIN",
+--    "BLUETOOTH_ADVERTISE",
+--    "BLUETOOTH_CONNECT",
+--    "BLUETOOTH_SCAN",
+--    "CAMERA",
+--    "CHANGE_NETWORK_STATE",
+--    "CHANGE_WIFI_STATE",
+--    "CLEAR_APP_CACHE",
+--    "DOWNLOAD_WITHOUT_NOTIFICATION",
+--    "FOREGROUND_SERVICE",
+--    "GET_PACKAGE_SIZE",
+--    "INSTALL_SHORTCUT",
+--    "INTERNET",
+--    "KILL_BACKGROUND_PROCESSES",
+--    "MANAGE_EXTERNAL_STORAGE",
+--    "READ_CALL_LOG",
+--    "READ_CONTACTS",
+--    "READ_EXTERNAL_STORAGE",
+--    "READ_FRAME_BUFFER",
+--    "READ_LOGS",
+--    "READ_PHONE_STATE",
+--    "READ_SMS",
+--    "RECORD_AUDIO",
+--    "REQUEST_INSTALL_PACKAGES",
+--    "SEND_SMS",
+--    "SET_WALLPAPER",
+--    "SYSTEM_ALERT_WINDOW",
+--    "VIBRATE",
+--    "WAKE_LOCK",
+--    "WRITE_CALL_LOG",
+--    "WRITE_CONTACTS",
+--    "WRITE_EXTERNAL_STORAGE",
+--    "WRITE_SETTINGS",
+--    "WRITE_SMS"
+--}

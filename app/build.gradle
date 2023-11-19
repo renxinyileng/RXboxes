@@ -1,0 +1,60 @@
+apply plugin: 'com.android.application'
+
+android {
+    compileSdkVersion 32
+    buildToolsVersion "32.0.0"
+
+    defaultConfig {
+        applicationId "rx.team.renxinyileng.box"
+        minSdkVersion 22
+        targetSdkVersion 29
+        versionCode 20230423
+        versionName "1.0.0Thefinalversion"
+    }
+    signingConfigs {
+        rxteam {
+            storeFile file('C:\\Users\\Administrator\\Desktop\\360jiagubao_windows_64\\rxteam.jks')
+            storePassword 'RXteam2713359049'
+            keyAlias 'rxteam'
+            keyPassword 'rxteam2713359049'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            //proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            ndk {abiFilters 'arm64-v8a'}
+        }
+        debug {
+            minifyEnabled false
+            shrinkResources false
+            ndk {abiFilters 'arm64-v8a'}
+        }
+    }
+    lintOptions {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+    sourceSets {
+        main {
+            //jniLibs.srcDirs = ['libs']
+        }
+    }
+    lintOptions {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    api fileTree(dir: "libs", include: ["*.jar","*.aar"])
+    api project(':androlua')
+    api 'androidx.appcompat:appcompat:1.0.0'
+    api 'com.google.android.material:material:1.0.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'es.voghdev.pdfviewpager:library:1.1.2'
+    implementation 'com.aliyun.sdk.android:AliyunPlayer:5.5.4.0-full'
+    api 'com.tencent.tbs:tbssdk:44286'
+    implementation project(path: ':CordovaLib')
+}
