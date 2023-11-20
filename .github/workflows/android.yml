@@ -24,9 +24,9 @@ jobs:
         run: chmod +x gradlew
       - name: Build with Gradle
         run: ./gradlew build
-               - name: upload apk
-               uses: actions/upload-artifact@master
-               if: always()
-               with:
-                 name: xupdate_apk
-                 path: ${{ github.workspace }}/app/build/outputs/apk/release
+      - name: upload apk
+        uses: actions/upload-artifact@master
+        if: always()
+        with:
+          name: xupdate_apk
+          path: ${{ github.workspace }}/app/build/outputs/apk/release
