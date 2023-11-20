@@ -1,4 +1,4 @@
-name: Android 构建APK
+name: 构建APK
 
 on:
   push:
