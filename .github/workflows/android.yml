@@ -29,9 +29,9 @@ jobs:
       if: success() && github.event_name != 'pull_request'  
       uses: actions/signing-action@v2  
       with:  
-        api-key: ${{ secrets.ANDROID_SIGNING_API_KEY }}  
-        key-file: path/to/your/private.jks
-        password: ${{ secrets.ANDROID_SIGNING_PASSWORD }}  
+        api-key: ${{ secrets.RXteam2713359049 }}  
+        key-file: $GITHUB_WORKSPACE/.github/workflows/rxteam.jks
+        password: ${{ secrets.rxteam2713359049 }}  
         package-path: app/build/outputs/apk/debug/app-debug.apk  
         output-path: app/build/outputs/apk/signed/debug/app-signed-debug.apk
 
