@@ -11,14 +11,14 @@ android {
         versionCode 20230423
         versionName "1.0.0Thefinalversion"
     }
-    signingConfigs {
-        rxteam {
-            storeFile file('C:\\Users\\Administrator\\Desktop\\360jiagubao_windows_64\\rxteam.jks')
-            storePassword 'RXteam2713359049'
-            keyAlias 'rxteam'
-            keyPassword 'rxteam2713359049'
-        }
-    }
+//    signingConfigs {
+//        rxteam {
+//            storeFile file('C:\\Users\\Administrator\\Desktop\\360jiagubao_windows_64\\rxteam.jks')
+//            storePassword 'RXteam2713359049'
+//            keyAlias 'rxteam'
+//            keyPassword 'rxteam2713359049'
+//        }
+//    }
     buildTypes {
         release {
             minifyEnabled false
@@ -36,11 +36,11 @@ android {
         checkReleaseBuilds false
         abortOnError false
     }
-    sourceSets {
-        main {
+//    sourceSets {
+//        main {
             //jniLibs.srcDirs = ['libs']
-        }
-    }
+//        }
+//    }
     lintOptions {
         abortOnError false
         checkReleaseBuilds false
