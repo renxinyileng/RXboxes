@@ -1,2 +1,2 @@
-include ':app',':androlua',':CordovaLib'
+include ':app',':androlua'
 rootProject.name = "RX盒子"

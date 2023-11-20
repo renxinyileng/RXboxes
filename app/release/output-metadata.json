@@ -1,0 +1,20 @@
+{
+  "version": 3,
+  "artifactType": {
+    "type": "APK",
+    "kind": "Directory"
+  },
+  "applicationId": "rx.team.renxinyileng.box",
+  "variantName": "release",
+  "elements": [
+    {
+      "type": "SINGLE",
+      "filters": [],
+      "attributes": [],
+      "versionCode": 20231120,
+      "versionName": "1.0.0正式版",
+      "outputFile": "app-release.apk"
+    }
+  ],
+  "elementType": "File"
+}
