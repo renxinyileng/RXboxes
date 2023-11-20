@@ -11,14 +11,6 @@ android {
         versionCode 20231120
         versionName "1.0.0正式版"
     }
-//    signingConfigs {
-//        rxteam {
-//            storeFile file('C:\\Users\\Administrator\\Desktop\\360jiagubao_windows_64\\rxteam.jks')
-//            storePassword 'RXteam2713359049'
-//            keyAlias 'rxteam'
-//            keyPassword 'rxteam2713359049'
-//        }
-//    }
     buildTypes {
         release {
             minifyEnabled false
