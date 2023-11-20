@@ -28,5 +28,5 @@ jobs:
         uses: actions/upload-artifact@master
         if: always()
         with:
-          name: xupdate_apk
+          name: 安装包
           path: ${{ github.workspace }}/app/build/outputs/apk/release
