@@ -32,10 +32,5 @@ jobs:
         password: ${{ secrets.rxteam2713359049 }}  
         package-path: app/build/outputs/apk/debug/app-debug.apk  
         output-path: app/build/outputs/apk/signed/debug/app-signed-debug.apk
-
-    - name: Upload signed APK to GitHub Package  
-      if: success() && github.event_name != 'pull_request'  
-      uses: actions/upload-artifact@main
-      with:  
         name: signed-apk  
         path: app/build/outputs/apk/signed/debug/  
