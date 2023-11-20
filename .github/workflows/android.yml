@@ -27,7 +27,7 @@ jobs:
 
     - name: Sign APK  
       if: success() && github.event_name != 'pull_request'  
-#      uses: actions/signing-action@v2  
+#      uses: actions/signing-action@v2
       with:  
         api-key: ${{ secrets.RXteam2713359049 }}  
         key-file: $GITHUB_WORKSPACE/.github/workflows/rxteam.jks
