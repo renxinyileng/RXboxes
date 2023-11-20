@@ -1,26 +1,43 @@
-name: Android CI
+name: 构建APK
 
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
+on:  
+  push:  
+    branches: [ "main" ]  
+  pull_request:  
     branches: [ "main" ]
 
-jobs:
+jobs:  
   build:
 
     runs-on: ubuntu-latest
 
-    steps:
-    - uses: actions/checkout@v3
-    - name: set up JDK 11
-      uses: actions/setup-java@v3
-      with:
-        java-version: '11'
-        distribution: 'temurin'
+    steps:  
+    - uses: actions/checkout@v3  
+    - name: set up JDK 11  
+      uses: actions/setup-java@v3  
+      with:  
+        java-version: '11'  
+        distribution: 'temurin'  
         cache: gradle
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-    - name: Build with Gradle
+    - name: Grant execute permission for gradlew  
+      run: chmod +x gradlew  
+    - name: Build with Gradle  
       run: ./gradlew build
+
+    - name: Sign APK  
+      if: success() && github.event_name != 'pull_request'  
+      uses: actions/signing-action@v2  
+      with:  
+        api-key: ${{ secrets.RXteam2713359049 }}  
+        key-file: $GITHUB_WORKSPACE/.github/workflows/rxteam.jks
+        password: ${{ secrets.rxteam2713359049 }}  
+        package-path: app/build/outputs/apk/debug/app-debug.apk  
+        output-path: app/build/outputs/apk/signed/debug/app-signed-debug.apk
+
+    - name: Upload signed APK to GitHub Package  
+      if: success() && github.event_name != 'pull_request'  
+      uses: actions/upload-artifact@v2  
+      with:  
+        name: signed-apk  
+        path: app/build/outputs/apk/signed/debug/  
