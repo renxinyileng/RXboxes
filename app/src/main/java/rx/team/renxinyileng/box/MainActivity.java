@@ -19,12 +19,11 @@
 
 package rx.team.renxinyileng.box;
 
+import android.content.Intent;
+
 import android.os.Bundle;
 
-import org.apache.cordova.*;
-
-import java.io.IOException;
-im
+import org.apache.cordova.CordovaActivity;
 public class MainActivity extends CordovaActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -37,8 +36,7 @@ public class MainActivity extends CordovaActivity {
 //        finish();
         // enable Cordova apps to be started in the background
         Bundle extras = getIntent().getExtras();
-        if (extras != null && extras.getBoolean("cdvStartInBackground", false)) {
-            moveTaskToBack(true);
+        if (extras != null && extras.getBoolean("cdvStartInBackground", false)) {moveTaskToBack(true);
         }
         // Set by <content src="index.html" /> in config.xml
         loadUrl(launchUrl);
