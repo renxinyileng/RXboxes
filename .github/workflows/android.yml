@@ -25,8 +25,9 @@ jobs:
       - name: Build with Gradle
         run: ./gradlew build
       - name: 上传apk
-        uses: actions/upload-artifact@master
-        if: always()
+#        uses: actions/upload-artifact@master
+        uses: ncipollo/release-action@v1.5.0
+#        if: always()
         with:
           name: 安装包
-          artifacts: ${{ github.workspace }}/app/build/outputs/apk/release/*.apk
+          path: ${{ github.workspace }}/app/build/outputs/apk/release/*.apk
