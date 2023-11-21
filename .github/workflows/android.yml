@@ -20,19 +20,13 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-#      - name: release apk sign
-#        run: |
-#          echo "给apk增加签名"
-#          cp $GITHUB_WORKSPACE/.github/workflows/rxteam.jks $GITHUB_WORKSPACE/app/rxteam.jks
-#          sed '$a\RELEASE_STORE_FILE=./rxteam.jks'          $GITHUB_WORKSPACE/gradle.properties -i
-
       - name: Grant execute 运行 gradlew
         run: chmod +x gradlew
       - name: Build with Gradle
         run: ./gradlew build
-      - run: echo $ENCODED_KEYSTORE | base64 -di > $GITHUB_WORKSPACE/.github/workflows/rxteam.jks
+      - run: echo $KEYSTORE | base64 -di > android/app/keystore.jks
         env:
-          ENCODED_KEYSTORE: ${{ secrets.ENCODED_KEYSTORE }}
+          ENCODED_KEYSTORE: ${{ secrets.KEYSTORE }}
       # 打包 APK
       - run: flutter build apk --release
         env:
