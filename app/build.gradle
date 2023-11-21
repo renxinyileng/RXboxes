@@ -19,7 +19,7 @@ android {
             keyPassword 'rxteam2713359049'
         }
     }*/
-/*    if (project.hasProperty("RELEASE_STORE_FILE")) {
+    if (project.hasProperty("RELEASE_STORE_FILE")) {
         signingConfigs {
             release {
                 storeFile file(RELEASE_STORE_FILE)
@@ -28,15 +28,15 @@ android {
                 keyPassword app_release.keyPassword
             }
         }
-    }*/
-    signingConfigs {
+    }
+/*    signingConfigs {
         release {
             keyAlias keystoreProperties['keyAlias']
             keyPassword keystoreProperties['keyPassword']
             storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
             storePassword keystoreProperties['storePassword']
         }
-    }
+    }*/
     buildTypes {
         release {
             minifyEnabled false
