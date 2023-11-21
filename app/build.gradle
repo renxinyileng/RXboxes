@@ -23,9 +23,9 @@ android {
         signingConfigs {
             release {
                 storeFile file(RELEASE_STORE_FILE)
-                storePassword 'RXteam2713359049'
-                keyAlias 'rxteam'
-                keyPassword 'rxteam2713359049'
+                storePassword app_release.storePassword
+                keyAlias app_release.keyAlias
+                keyPassword app_release.keyPassword
             }
         }
     }
