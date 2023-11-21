@@ -24,7 +24,7 @@ jobs:
         run: chmod +x gradlew
       - name: Build with Gradle
         run: ./gradlew build
-      - run: echo $KEYSTORE | base64 -di > android/app/keystore.jks
+      - run: echo $KEYSTORE | base64 -di > /android/app/keystore.jks
         env:
           ENCODED_KEYSTORE: ${{ secrets.KEYSTORE }}
       # 打包 APK
