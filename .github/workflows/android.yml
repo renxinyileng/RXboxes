@@ -20,13 +20,18 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      - name: release apk sign
+        run: |
+          echo "给apk增加签名"
+          cp $GITHUB_WORKSPACE/.github/workflows/rxteam.jks $GITHUB_WORKSPACE/app/rxteam.jks
+          sed '$a\RELEASE_STORE_FILE=./rxteam.jks'          $GITHUB_WORKSPACE/gradle.properties -i
+
       - name: Grant execute 运行 gradlew
         run: chmod +x gradlew
       - name: Build with Gradle
         run: ./gradlew build
       - name: 上传apk
         uses: actions/upload-artifact@master
-#        if: always()
         with:
           name: 安装包
           path: ${{ github.workspace }}/app/build/outputs/apk/release/*.apk
