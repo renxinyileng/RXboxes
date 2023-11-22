@@ -45,11 +45,6 @@ jobs:
         with:
           name: 安装包
           path: ${{steps.sign_app.outputs.signedReleaseFile}}
-#      - name: Android Sign 2
-#        uses: actions/upload-artifact@master
-#        with:
-#          name: 安装包
-#          path: ${{ github.workspace }}/app/build/outputs/apk/release/*.apk
       # 发布到 Release
 #      - name: Release apk
 #        uses: ncipollo/release-action@v1.5.0
@@ -57,11 +52,8 @@ jobs:
 #          artifacts: ${{ github.workspace }}/app/outputs/apk/release/*signed.apk
 ##          artifacts: ${{steps:sign_app:outputs:signedReleaseFile}}
 #          token: ${{ secrets.RELEASE_TOKEN }}
-      - name: Echo APK
-        run: echo Signed APK FILE ${{steps.sign_app.outputs.signedReleaseFile}}
-      - name: Release signed APK
-        uses: MicahSphelele/action-publish-signed-apk@main
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          APP_FOLDER: app
-          FILE_DIR: ${{steps.sign_app.outputs.signedReleaseFile}}
+      - name: Release apk
+        uses: ncipollo/release-action@v1.5.0
+        with:
+          artifacts: "build/app/outputs/apk/release/*.apk"
+          token: ${{ secrets.RELEASE_TOKEN }}
