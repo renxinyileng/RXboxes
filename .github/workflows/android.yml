@@ -45,15 +45,16 @@ jobs:
         with:
           name: 安装包
           path: ${{steps.sign_app.outputs.signedReleaseFile}}
-      # 发布到 Release
-#      - name: Release apk
-#        uses: ncipollo/release-action@v1.5.0
-#        with:
-#          artifacts: ${{ github.workspace }}/app/outputs/apk/release/*signed.apk
-##          artifacts: ${{steps:sign_app:outputs:signedReleaseFile}}
+
 #          token: ${{ secrets.RELEASE_TOKEN }}
-      - name: Release apk
-        uses: ncipollo/release-action@v1.5.0
-        with:
-          artifacts: "build/app/outputs/apk/release/*.apk"
-          token: ${{ secrets.RELEASE_TOKEN }}
+      - name: Releasing using Hub
+        uses: VladDaniliuk/action-release-releaseapk@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          VERSION_VARIABLE: versionName
+          APP_FILE: buildSrc/Android.kt
+          APP_FOLDER: ${{steps.sign_app.outputs.signedReleaseFile}}
+          #./app/release/app.apk
+          CHANGELOG_FILE: ./CHANGELOG.md
+          RELEASE_TITLE: New Build
+          NAME_VARIABLE: app-release.apk
