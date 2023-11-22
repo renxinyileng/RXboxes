@@ -48,11 +48,6 @@ jobs:
 
 #          token: ${{ secrets.RELEASE_TOKEN }}
       - name: Releasing using Hub
-        uses: kyze8439690/action-release-releaseapk@master
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          APP_FOLDER: ${{steps.sign_app.outputs.signedReleaseFile}}
-      - name: Releasing using Hub
         uses: VladDaniliuk/action-release-releaseapk@master
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
@@ -60,6 +55,6 @@ jobs:
           APP_FILE: ./app/build.gradle
           APP_FOLDER: ${{steps.sign_app.outputs.signedReleaseFile}}
           #./app/release/app.apk
-          CHANGELOG_FILE: ./CHANGELOG.md
+          CHANGELOG_FILE: ./README.md
           RELEASE_TITLE: New Build
           NAME_VARIABLE: app-release.apk
