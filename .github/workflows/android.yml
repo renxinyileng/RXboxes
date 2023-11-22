@@ -24,9 +24,9 @@ jobs:
         run: chmod +x gradlew
       - name: Build with Gradle
         run: ./gradlew build
-#      - run: echo $KEYSTORE | base64 -di > /android/app/keystore.jks
-#        env:
-#          ENCODED_KEYSTORE: ${{ secrets.KEYSTORE }}
+      #      - run: echo $KEYSTORE | base64 -di > /android/app/keystore.jks
+      #        env:
+      #          ENCODED_KEYSTORE: ${{ secrets.KEYSTORE }}
       # 打包 APK
       #      - run: flutter build apk --release
       #        env:
@@ -44,9 +44,9 @@ jobs:
             alias: ${{ secrets.KEY_ALIAS }}
             keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
             keyPassword: ${{ secrets.KEY_PASSWORD }}
-          env:
-            BUILD_TOOLS_VERSION: "32.0.0"
-      - name: 上传apk
+#          env:
+#            BUILD_TOOLS_VERSION: "32.0.0"
+      - name: Android Sign 2
         uses: actions/upload-artifact@master
         with:
           name: 安装包
