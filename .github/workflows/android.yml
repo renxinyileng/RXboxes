@@ -48,6 +48,11 @@ jobs:
 
 #          token: ${{ secrets.RELEASE_TOKEN }}
       - name: Releasing using Hub
+        uses: kyze8439690/action-release-releaseapk@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          APP_FOLDER: ${{steps.sign_app.outputs.signedReleaseFile}}
+      - name: Releasing using Hub
         uses: VladDaniliuk/action-release-releaseapk@master
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
