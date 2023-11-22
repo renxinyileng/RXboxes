@@ -28,17 +28,17 @@ jobs:
         env:
           ENCODED_KEYSTORE: ${{ secrets.KEYSTORE }}
       # 打包 APK
-#      - run: flutter build apk --release
-#        env:
-#          KEYSTORE_PASSWORD: ${{secrets.KEYSTORE_PASSWORD}}
-#          KEY_ALIAS: ${{secrets.KEY_ALIAS}}
-#          KEY_PASSWORD: ${{secrets.KEY_PASSWORD}}
+      #      - run: flutter build apk --release
+      #        env:
+      #          KEYSTORE_PASSWORD: ${{secrets.KEYSTORE_PASSWORD}}
+      #          KEY_ALIAS: ${{secrets.KEY_ALIAS}}
+      #          KEY_PASSWORD: ${{secrets.KEY_PASSWORD}}
       - uses: Tlaster/android-sign@v1
         name: 签名APP
         with:
           releaseDirectory: |
-              app/build/outputs/apk/release
-              app/build/outputs/bundle/release
+            app/build/outputs/apk/release
+            app/build/outputs/bundle/release
             signingKeyBase64: ${{ secrets.KEYSTORE }}
             output: build/release/signed
             alias: ${{ secrets.KEY_ALIAS }}
