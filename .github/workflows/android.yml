@@ -20,35 +20,14 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Grant execute 运行 gradlew
+      - name: 授予执行运行gradlew权限
         run: chmod +x gradlew
-      - name: Build with Gradle
+      - name: 使用Gradle构建
         run: ./gradlew build
-      #      - run: echo $KEYSTORE | base64 -di > /android/app/keystore.jks
-      #        env:
-      #          ENCODED_KEYSTORE: ${{ secrets.KEYSTORE }}
-      # 打包 APK
-      #      - run: flutter build apk --release
-      #        env:
-      #          KEYSTORE_PASSWORD: ${{secrets.KEYSTORE_PASSWORD}}
-      #          KEY_ALIAS: ${{secrets.KEY_ALIAS}}
-      #          KEY_PASSWORD: ${{secrets.KEY_PASSWORD}}
-#      - uses: Tlaster/android-sign@v1.2.2
-#        name: 签名APP
-#        with:
-#          releaseDirectory: |
-#            app/build/outputs/apk/release
-#            app/build/outputs/bundle/release
-#            signingKeyBase64: ${{ secrets.KEYSTORE }}
-#            output: build/release/signed
-#            alias: ${{ secrets.KEY_ALIAS }}
-#            keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-#            keyPassword: ${{ secrets.KEY_PASSWORD }}
-#          env:
-#            BUILD_TOOLS_VERSION: "32.0.0"
+        #签名安装包
       - uses: kevin-david/zipalign-sign-android-release@v1.1
-        name: Sign app APK
-        # ID used to access action output
+        name: 签名APK文件
+        #  用于访问动作输出的ID。
         id: sign_app
         with:
           releaseDirectory: app/build/outputs/apk/release
@@ -58,10 +37,10 @@ jobs:
           keyPassword: ${{ secrets.KEY_PASSWORD }}
           zipAlign: true
         env:
-          # override default build-tools version (32.0.0) -- optional
+          # 覆盖默认的构建工具版本（32.0.0）-- 可选
           BUILD_TOOLS_VERSION: "32.0.0"
 
-      # Example use of `signedReleaseFile` output -- not needed
+      # 签名发布文件输出的示例用法 -- 无需
       - uses: actions/upload-artifact@v2
         with:
           name: 安装包
@@ -72,8 +51,9 @@ jobs:
 #          name: 安装包
 #          path: ${{ github.workspace }}/app/build/outputs/apk/release/*.apk
       # 发布到 Release
-#      - name: Release apk
-#        uses: ncipollo/release-action@v1.5.0
-#        with:
+      - name: Release apk
+        uses: ncipollo/release-action@v1.5.0
+        with:
 #          artifacts: ${{ github.workspace }}/app/outputs/apk/release/*.apk
-#          token: ${{ secrets.RELEASE_TOKEN }}
+          artifacts: ${{steps:sign_app:outputs:signedReleaseFile}}
+          token: ${{ secrets.RELEASE_TOKEN }}
