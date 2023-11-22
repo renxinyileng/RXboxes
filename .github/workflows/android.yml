@@ -52,7 +52,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           VERSION_VARIABLE: versionName
-          APP_FILE: buildSrc/Android.kt
+          APP_FILE: ./app/build.gradle
           APP_FOLDER: ${{steps.sign_app.outputs.signedReleaseFile}}
           #./app/release/app.apk
           CHANGELOG_FILE: ./CHANGELOG.md
