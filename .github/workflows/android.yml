@@ -54,6 +54,6 @@ jobs:
       - name: Release apk
         uses: ncipollo/release-action@v1.5.0
         with:
-#          artifacts: ${{ github.workspace }}/app/outputs/apk/release/*.apk
-          artifacts: ${{steps:sign_app:outputs:signedReleaseFile}}
+          artifacts: ${{ github.workspace }}/app/outputs/apk/release/*signed.apk
+#          artifacts: ${{steps:sign_app:outputs:signedReleaseFile}}
           token: ${{ secrets.RELEASE_TOKEN }}
