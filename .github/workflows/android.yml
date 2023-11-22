@@ -33,7 +33,7 @@ jobs:
       #          KEYSTORE_PASSWORD: ${{secrets.KEYSTORE_PASSWORD}}
       #          KEY_ALIAS: ${{secrets.KEY_ALIAS}}
       #          KEY_PASSWORD: ${{secrets.KEY_PASSWORD}}
-      - uses: Tlaster/android-sign@v1
+      - uses: Tlaster/android-sign@v1.2.2
         name: 签名APP
         with:
           releaseDirectory: |
