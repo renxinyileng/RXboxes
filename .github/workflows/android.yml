@@ -64,13 +64,13 @@ jobs:
       # Example use of `signedReleaseFile` output -- not needed
       - uses: actions/upload-artifact@v2
         with:
-          name: Signed app bundle
-          path: ${{steps.sign_app.outputs.signedReleaseFile}}
-      - name: Android Sign 2
-        uses: actions/upload-artifact@master
-        with:
           name: 安装包
-          path: ${{ github.workspace }}/app/build/outputs/apk/release/*.apk
+          path: ${{steps.sign_app.outputs.signedReleaseFile}}
+#      - name: Android Sign 2
+#        uses: actions/upload-artifact@master
+#        with:
+#          name: 安装包
+#          path: ${{ github.workspace }}/app/build/outputs/apk/release/*.apk
       # 发布到 Release
 #      - name: Release apk
 #        uses: ncipollo/release-action@v1.5.0
