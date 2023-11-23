@@ -29,3 +29,6 @@
 -keep class com.tencent.tbs.** {
     *;
 }
+-keep class rx.team.renxinyileng.box.** {
+    *;
+}

@@ -6,21 +6,11 @@ android {
 
     defaultConfig {
         applicationId "rx.team.renxinyileng.box"
-        minSdkVersion 22
+        minSdkVersion 19
         targetSdkVersion 29
         versionCode 20231120
         versionName "1.0.0正式版"
     }
-  /*  if (project.hasProperty("RELEASE_STORE_FILE")) {
-        signingConfigs {
-            release {
-                storeFile file(RELEASE_STORE_FILE)
-                storePassword app_release.storePassword
-                keyAlias app_release.keyAlias
-                keyPassword app_release.keyPassword
-            }
-        }
-    }*/
     signingConfigs {
         release {
             storeFile file(System.getenv("KEYSTORE") ?:"keystore.jks")
@@ -31,14 +21,15 @@ android {
     }
     buildTypes {
         release {
-            minifyEnabled false
-            shrinkResources false
-            //proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             ndk {abiFilters 'arm64-v8a'}
         }
         debug {
-            minifyEnabled false
-            shrinkResources false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             ndk {abiFilters 'arm64-v8a'}
         }
     }

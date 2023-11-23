@@ -46,7 +46,6 @@ local function test()
     print(deobfuscated)
 end
 
-test()
 -- 定义一个函数，用于将字符串进行加密
 local function encode(str)
     local len = string.len(str) -- 获取字符串长度
@@ -86,9 +85,6 @@ end
 local function deobfuscate(code)
     local reversed = string.reverse(code) -- 将混淆后的代码反转
     local decoded =    decode(reversed) -- 对反转后的字符串进行解密
-```
-
-```F:\AndroidStudioProjects\RXtestbox\app\src\main\assets\luajm.lua
 local function encode(str)
     local len = string.len(str)
     local ret = ""
@@ -191,5 +187,3 @@ local function test()
     local deobfuscated = deobfuscate(obfuscated) -- 对混淆后的代码进行解混淆
     print(deobfuscated) -- 输出解混淆后的代码
 end
-
-test() -- 调用
