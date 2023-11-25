@@ -1,6 +1,7 @@
 -- 导入必要的库
 require("import")
 require("rxteam")
+import "log"
 import("sha256")
 import "android.app.*"
 import "android.widget.*"
@@ -122,7 +123,7 @@ sha256sign = sha256.sha256(tostring(pm))
 if (File(数据存储 .. tostring(sha256sgin)).exists() == false) then
     提示("by:人心已冷\nqq:2713359049")
     File(数据存储 .. sha256sign).mkdir()
-    import "android.os.SystemProperties"
+--[[    import "android.os.SystemProperties"
       if tostring(SystemProperties.get("ro.product.cpu.abi")) == "arm64-v8a" and tostring(io.popen("uname -m"):read("*l")) == "aarch64" then
           提示("符合aric2软件的开启条件正在尝试开启")
           File(tostring(Environment.getExternalStorageDirectory().getAbsolutePath() .. "/Download/RX盒子/aria2ini/")).mkdir()
@@ -136,7 +137,7 @@ if (File(数据存储 .. tostring(sha256sgin)).exists() == false) then
           print(io.popen("/data/data/rx.team.renxinyileng.box/files/www/aria2/android/aria2c --conf-path=/data/data/rx.team.renxinyileng.box/files/www/aria2/aria2.conf -D"):read("*all"))
       else
           提示("不符合aria2软件的开启条件")
-      end
+      end]]
 end
 import "android.graphics.PixelFormat"
 import "com.tencent.smtt.sdk.WebViewClient"

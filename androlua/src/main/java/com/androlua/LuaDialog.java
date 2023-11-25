@@ -1,7 +1,7 @@
 package com.androlua;
 
-//import android.app.AlertDialog;
-import androidx.appcompat.app.AlertDialog;
+import android.app.AlertDialog;
+//import androidx.appcompat.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.graphics.drawable.Drawable;

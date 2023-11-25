@@ -1,6 +1,7 @@
 require 'init'
+--debugmode = false
 _G=_G
-if this!=activity or !debugmode
+if this~=activity or ~debugmode then
   _G.safe_error=print
   _G.explain=print
   _G.info=print
@@ -40,10 +41,10 @@ if this!=activity or !debugmode
   local SpannableStringBuilder=luajava.bindClass "android.text.SpannableStringBuilder"
   local typedValue = luajava.newInstance('android.util.TypedValue')
   luajava.getContext().getTheme().resolveAttribute(android.R.attr.colorAccent, typedValue, true);
-  local dark=luajava.getContext().getResources().getConfiguration().uiMode& Configuration.UI_MODE_NIGHT_YES!=0
+  local dark=luajava.getContext().getResources().getConfiguration().uiMode& Configuration.UI_MODE_NIGHT_YES~=0
   local tcolor=typedValue.data
   local bcolor=0xfff1f3f6
-  if dark
+  if dark then
     local hsv=float[3]
     Color.colorToHSV(tcolor,hsv)
     hsv[1]=0.7
@@ -107,14 +108,14 @@ if this!=activity or !debugmode
   ti.Period=1000
   ti.onTick=function()
     local s=readlog('lua:* *:S')
-    if s:find('Runtime%s-error')
+    if s:find('Runtime%s-error') then
       safe_error((s:gsub('^%[.+%]\n','')))
       ids.btn.title.setText('异常')
       ids.btn.root.setBackgroundColor(0xFFe90000)
       ids.btn.title.setTextColor(0xFFe90000)
       ti.stop()
     end
-    if this.isFinishing() or this.isDestroyed()
+    if this.isFinishing() or this.isDestroyed() then
       ti.stop()
     end
   end
@@ -627,20 +628,20 @@ if this!=activity or !debugmode
 
     ids.dia.print_empty.setVisibility(8)
 
-    for k,v ipairs(arg)
+    for k,v in ipairs(arg) do
       str[#str+1]=tostring(v)
-      if k!=#arg
+      if k~=#arg then
         str[#str+1]='   '
       end
     end
 
     local s=table.concat(str)
     local tag=s
-    if utf8.len(s)>80
+    if utf8.len(s)>80 then
       s=string.sub(s,1,80)..'...'
     end
 
-    if is
+    if is then
       s=date.format(System.currentTimeMillis())..s
     end
 
@@ -681,7 +682,7 @@ if this!=activity or !debugmode
 
   local _ass=assert
   function assert(a,...)
-    if !a
+    if ~a then
       log(0xFFe90000,1,...)
     end
     return _ass(a,...)
@@ -734,8 +735,8 @@ if this!=activity or !debugmode
     table.clear(variable_path)
     table.clear(variable_data)
 
-    for k,v ipairs(variable_node)
-      if type(tab[v])=='table'
+    for k,v in ipairs(variable_node) do
+      if type(tab[v])=='table' then
         tab=tab[v]
        else
         variable_node[k]=nil
@@ -743,13 +744,13 @@ if this!=activity or !debugmode
     end
 
     local t={}
-    for k,v ipairs(variable_node)
+    for k,v in ipairs(variable_node) do
       t[k]=tostring(v)
     end
 
     local s=table.concat(t,'/')
 
-    if #s>0
+    if #s>0 then
       s=s.."/"
     end
 
@@ -757,28 +758,39 @@ if this!=activity or !debugmode
 
 
     table.clear(variable_data)
-    if #variable_node!=0
+    if #variable_node~=0 then
       add(1,'返回父节点')
     end
 
     add(2,'序列化节点')
 
-    for k,v pairs(tab)
+    for k,v in pairs(tab) do
       local _k,_v=k,v
       v=tostring(v)
-      if utf8.len(v)>80
+      if utf8.len(v)>80 then
         v=utf8.sub(v,1,80)..'...'
       end
-      when type(k)!='string' k=string.format('[%s]',tostring(k))
+--[[
+      when type(k)~='string' k=string.format('[%s]',tostring(k))
       when type(_v)=='string' v=string.format('"%s"',v)
       when type(_v)=='table' v=string.format('%s => {...}',v)
+]]
+      if type(k) ~= 'string' then
+        k = string.format('[%s]', tostring(k))
+      end
+      if type(_v) == 'string' then
+        v = string.format('"%s"', _v)
+      end
+      if type(_v) == 'table' then
+        v = string.format('%s => {...}', _v)
+      end
 
 
       local s=string.format('%s => %s',k,tostring(v))
 
 
       local span
-      if variable_span[#variable_data+1]
+      if variable_span[#variable_data+1] then
         span=variable_span[#variable_data+1]
        else
         span=SpannableStringBuilder()
@@ -793,8 +805,8 @@ if this!=activity or !debugmode
       span.setSpan(color_span2, 0, utf8.len(k), flags)
       span.setSpan(color_span1, s1-1, e1, flags)
 
-      if type(_v)=='table'
-      if s:find('table')
+      if type(_v)=='table' then
+      if s:find('table') then
         local s0,e0=utf8.find(s,'table:%s-0x%x+%s')
         span.setSpan(color_span3, s0-1, e0, flags)
         local s1,e1=utf8.find(s,'=>',e0)
@@ -816,18 +828,18 @@ if this!=activity or !debugmode
   ids.dia.variable_list.onItemClick=function(a,b,c,d)
     振动(b)
     local t=variable_kv[d]
-    if t==1
+    if t==1 then
       variable_node[#variable_node]=nil
       tree()
-     elseif t==2
+     elseif t==2 then
       local tab=_ENV
-      for k,v ipairs(variable_node)
+      for k,v in ipairs(variable_node) do
         tab=tab[v]
       end
       ids.dia.text_edit.setText(dump(tab))
       ids.dia.page.setCurrentItem(3,false)
      else
-      if type(t[2])=="table"
+      if type(t[2])=="table" then
         variable_node[#variable_node+1]=t[1]
         tree()
        else
@@ -844,7 +856,7 @@ if this!=activity or !debugmode
   end
 
   ids.dia.variable_search.onEditorAction=function(v,actionId,event)
-    if actionId==0
+    if actionId==0 then
       variable_node[#variable_node+1]=variable_path[v.text]
       v.setText('')
       activity.getSystemService(Context.INPUT_METHOD_SERVICE).toggleSoftInput(0,InputMethodManager.HIDE_NOT_ALWAYS)
@@ -887,8 +899,8 @@ if this!=activity or !debugmode
       table.clear(logcat_data)
       local t,n={},0
       str:gsub('[^\n\n]+',function(w)
-        if n%2==0
-          if !w:find('^%[')
+        if n%2==0 then
+          if ~w:find('^%[') then
             t[#t]=string.format('%s\n%s',t[#t],w)
            else
             t[#t+1]=w
@@ -899,7 +911,7 @@ if this!=activity or !debugmode
           n=n+1
         end
       end)
-      for k,v ipairs(t)
+      for k,v in ipairs(t) do
         logcat_data[k]={
           txt={
             text=v:match('^(%[%s.+%s%])') or v,
@@ -911,13 +923,13 @@ if this!=activity or !debugmode
     end)
   end
 
-  for i=0,7
+  for i=0,7 do
     local v=ids.dia.logcat_bar.getChildAt(i*2)
     local i=i
     v.onClick=function(v0)
       振动(v0)
       logcat_pos=i+1
-      for i=0,14,2
+      for i=0,14,2 do
         local _v=ids.dia.logcat_bar.getChildAt(i)
         _v.setTextColor(0xff909090)
         _v.getPaint().setFakeBoldText(false)
@@ -1011,7 +1023,7 @@ if this!=activity or !debugmode
     pcall(function()
       Pretend.setColor(ColorStateList(int[0].class{int{}},int{color or 0xffffffff}))
     end)
-    if id
+    if id then
       return id.setBackground(Pretend)
      else
       return Pretend
@@ -1021,15 +1033,15 @@ if this!=activity or !debugmode
   local p=-1
   ids.dia.page.addOnPageChangeListener{
     onPageScrolled=function(pos)
-      if pos!=p
+      if pos~=p then
         p=pos
-        if pos==1
+        if pos==1 then
           tree()
-         elseif pos==2
+         elseif pos==2 then
           read()
         end
-        for k,v ipairs(bar)
-          if k==pos+1
+        for k,v in ipairs(bar) do
+          if k==pos+1 then
             ids.dia[v].setBackgroundColor(0xffffffff)
             continue
           end
@@ -1040,10 +1052,10 @@ if this!=activity or !debugmode
           local tab=btn_list[pos+1]
           local n=0
           local width=ids.dia.bar.getWidth()/(#tab/2)
-          for i=1,#tab,2
+          for i=1,#tab,2 do
             n=n+1
             local lay
-            if btn_cache[n]
+            if btn_cache[n] then
               lay=btn_cache[n]
              else
               lay=loadlayout({
@@ -1061,7 +1073,7 @@ if this!=activity or !debugmode
             lay.setText(tab[i])
             lay.onClick=tab[i+1]
             ids.dia.bar.addView(lay)
-            if n!=#tab/2
+            if n~=#tab/2 then
               ids.dia.bar.addView(loadlayout{
                 View;
                 layout_width="2";
@@ -1073,7 +1085,7 @@ if this!=activity or !debugmode
       end
     end}
 
-  for k,v ipairs(bar)
+  for k,v in ipairs(bar) do
     ids.dia[v].onClick=function(v)
       振动(v)
       ids.dia.page.setCurrentItem(k-1,false)
@@ -1112,9 +1124,9 @@ if this!=activity or !debugmode
   ids.dia.control_run.onClick=function(v)
     振动(v)
     local f,e=load(ids.dia.control_code.text)
-    if f
+    if f then
       local v,e=pcall(f)
-      if v
+      if v then
         ids.dia.control_code.setText('')
        else
         safe_error(e)
