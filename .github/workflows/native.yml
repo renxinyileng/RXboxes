@@ -31,6 +31,8 @@ jobs:
       - name: ndk-build
         working-directory: androlua/src/main
         run: |
+          set -o pipefail
+          # -k：一次跑出所有模块的错误，便于一轮内全部修掉
           "${{ steps.ndk.outputs.path }}/ndk-build" \
             NDK_PROJECT_PATH=. \
             APP_BUILD_SCRIPT=jni/Android.mk \
@@ -38,7 +40,15 @@ jobs:
             APP_ABI="armeabi-v7a arm64-v8a" \
             APP_PLATFORM=android-23 \
             NDK_LIBS_OUT=./libs NDK_OUT=./obj \
-            -k -j"$(nproc)"   # -k：一次跑出所有模块的错误
+            -k -j"$(nproc)" 2>&1 | tee /tmp/ndk.log
+
+      - name: 错误摘要
+        if: always()
+        run: |
+          echo "===== error: 行 ====="
+          grep -E "(error|fatal error):" /tmp/ndk.log | sort -u | head -60 || echo "（无）"
+          echo "===== 未链接成功的模块 ====="
+          grep -E "^make: \*\*\*" /tmp/ndk.log | sort -u | head -30 || echo "（无）"
 
       - name: 产物清单
         working-directory: androlua/src/main
