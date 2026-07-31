@@ -31,26 +31,36 @@ buildscript {
     repositories {
         google()
         mavenCentral()
-        // PdfViewPager 只发布在 jcenter，通过阿里云镜像获取
-        maven { url 'https://maven.aliyun.com/repository/jcenter' }
-        // 阿里云播放器 SDK
-        maven { url 'https://maven.aliyun.com/repository/releases' }
-        maven { url 'https://maven.aliyun.com/repository/public' }
-        maven { url 'https://jitpack.io' }
     }
     dependencies {
         classpath "com.android.tools.build:gradle:$agp_version"
     }
 }
 
+/*
+ * 阿里云镜像只保留给确实取不到别处的两个依赖，并用 content 限定分组：
+ * 不限定的话每个依赖都会先去问一遍阿里云，在 GitHub 的海外 runner 上
+ * 经常拖慢甚至卡住整个解析过程（构建时间从 3 分钟涨到 30 分钟以上）。
+ */
 allprojects {
     repositories {
         google()
         mavenCentral()
-        maven { url 'https://maven.aliyun.com/repository/jcenter' }
-        maven { url 'https://maven.aliyun.com/repository/releases' }
-        maven { url 'https://maven.aliyun.com/repository/public' }
-        maven { url 'https://jitpack.io' }
+
+        // PdfViewPager 只发布在 jcenter，用阿里云镜像获取
+        maven {
+            url 'https://maven.aliyun.com/repository/jcenter'
+            content { includeGroup 'es.voghdev.pdfviewpager' }
+        }
+        // 阿里云播放器 SDK
+        maven {
+            url 'https://maven.aliyun.com/repository/releases'
+            content { includeGroupByRegex 'com\\.aliyun.*' }
+        }
+        maven {
+            url 'https://maven.aliyun.com/repository/public'
+            content { includeGroupByRegex 'com\\.aliyun.*' }
+        }
     }
 }
 
