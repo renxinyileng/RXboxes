@@ -4,8 +4,22 @@ android {
     namespace 'com.androlua'
     compileSdk rootProject.ext.compile_sdk
 
+    // Lua 解释器与各原生模块改为随工程一起从源码编译，源码在 src/main/jni
+    ndkVersion rootProject.ext.ndk_version
+
     defaultConfig {
         minSdk rootProject.ext.min_sdk
+        externalNativeBuild {
+            ndkBuild {
+                arguments "NDK_APPLICATION_MK:=$projectDir/src/main/jni/Application.mk"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        ndkBuild {
+            path 'src/main/jni/Android.mk'
+        }
     }
 
     compileOptions {
@@ -18,7 +32,6 @@ android {
             minifyEnabled false
             // AGP 9 起 proguard-android.txt 因内含 -dontoptimize 已不再支持
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            // jniLibs 只提供 armeabi-v7a / arm64-v8a，原先声明的 x86 并无对应 .so
             ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
         }
         debug {

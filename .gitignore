@@ -28,3 +28,7 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# ndk-build 本地产物
+androlua/src/main/obj/
+androlua/src/main/libs/
