@@ -6,9 +6,6 @@ android {
 
     defaultConfig {
         minSdk rootProject.ext.min_sdk
-        // 与随附的 AndroLua+ jar / libluajava.so 版本保持一致
-        versionCode 1199
-        versionName "5.0.22(armeabi-v7a,arm64-v8a)"
     }
 
     compileOptions {
@@ -19,7 +16,8 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // AGP 9 起 proguard-android.txt 因内含 -dontoptimize 已不再支持
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             // jniLibs 只提供 armeabi-v7a / arm64-v8a，原先声明的 x86 并无对应 .so
             ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
         }
