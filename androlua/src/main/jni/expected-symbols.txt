@@ -1,5 +1,12 @@
 # 旧版 libluajava.so（AndroLua+ 5.0.22 / Lua 5.3.3）导出的符号基线
 # CI 校验重新编译出的 libluajava.so 必须仍然导出这些符号
+#
+# 以下 4 个在 Lua 5.4 / AndroLua+ 里已改为宏，不再是导出函数，故不作要求：
+#   lua_newuserdata   -> lua_newuserdatauv(L,s,1)
+#   lua_getuservalue  -> lua_getiuservalue(L,idx,1)
+#   lua_setuservalue  -> lua_setiuservalue(L,idx,1)
+#   luaL_typerror     -> lua.h 里的宏
+# 各原生模块都用同一套头文件重新编译，链接到的是上述展开后的函数。
 Java_com_luajava_LuaState__1LargError
 Java_com_luajava_LuaState__1LcallMeta
 Java_com_luajava_LuaState__1LcheckAny
@@ -164,7 +171,6 @@ luaL_setmetatable
 luaL_testudata
 luaL_tolstring
 luaL_traceback
-luaL_typerror
 luaL_unref
 luaL_where
 lua_absindex
@@ -195,7 +201,6 @@ lua_getstack
 lua_gettable
 lua_gettop
 lua_getupvalue
-lua_getuservalue
 lua_ident
 lua_iscfunction
 lua_isinteger
@@ -207,7 +212,6 @@ lua_len
 lua_load
 lua_newstate
 lua_newthread
-lua_newuserdata
 lua_next
 lua_pcallk
 lua_pushboolean
@@ -242,7 +246,6 @@ lua_setmetatable
 lua_settable
 lua_settop
 lua_setupvalue
-lua_setuservalue
 lua_status
 lua_stringtonumber
 lua_toboolean
