@@ -358,9 +358,15 @@
 ** data.lua 等）沿用 Lua 5.1 写法，需要保留 module/package.seeall、
 ** table.foreach(i)、table.maxn。这些在 AndroLua+ 5.0.x 里本来就是打开的。
 */
+#if !defined(LUA_COMPAT_MODULE)
 #define LUA_COMPAT_MODULE
+#endif
+#if !defined(LUA_COMPAT_FOREACH)
 #define LUA_COMPAT_FOREACH
+#endif
+#if !defined(LUA_COMPAT_MAXN)
 #define LUA_COMPAT_MAXN
+#endif
 
 /*
 @@ LUA_COMPAT_5_3 controls other macros for compatibility with Lua 5.3.

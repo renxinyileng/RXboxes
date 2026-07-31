@@ -44,7 +44,6 @@ LOCAL_SRC_FILES := \
 	ltable.c \
 	ltablib.c \
 	ltm.c \
-	lua.c \
 	lundump.c \
 	lutf8lib.c \
 	lbitlib.c \
