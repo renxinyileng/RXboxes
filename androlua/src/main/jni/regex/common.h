@@ -8,7 +8,9 @@
 
 #if LUA_VERSION_NUM > 501
 # define lua_objlen lua_rawlen
+# if !defined(luaL_typerror)   /* AndroLua+ 的 lua.h 已提供同名宏 */
   int luaL_typerror (lua_State *L, int narg, const char *tname);
+# endif
 #endif
 
 /* REX_API can be overridden from the command line or Makefile */
