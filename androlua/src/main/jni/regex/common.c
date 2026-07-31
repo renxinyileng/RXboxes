@@ -257,7 +257,8 @@ int bufferZ_next (TBuffer *buf, size_t *iter, size_t *num, const char **str) {
   return 0;
 }
 
-#if LUA_VERSION_NUM > 501
+/* AndroLua+ 的 lua.h 已把 luaL_typerror 定义成宏，这里不能再定义同名函数 */
+#if LUA_VERSION_NUM > 501 && !defined(luaL_typerror)
 int luaL_typerror (lua_State *L, int narg, const char *tname) {
   const char *msg = lua_pushfstring(L, "%s expected, got %s",
                                     tname, luaL_typename(L, narg));
