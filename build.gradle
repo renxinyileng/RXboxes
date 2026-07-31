@@ -12,6 +12,9 @@ buildscript {
         // 依赖 requestLegacyExternalStorage，提到 30+ 会触发分区存储导致功能失效。
         target_sdk = 29
 
+        // 编译 Lua 解释器等原生模块用的 NDK（GitHub Actions 镜像自带该版本）
+        ndk_version = '27.3.13750724'
+
         // 依赖版本
         appcompat_version = '1.7.1'
         material_version = '1.14.0'

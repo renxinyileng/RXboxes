@@ -1,0 +1,85 @@
+name: 编译原生模块
+
+# 单独跑 ndk-build，快速验证 Lua 解释器与各原生模块能否编出来，
+# 并校验 libluajava.so 的导出符号相对旧版没有缺失。
+on:
+  push:
+    branches: [ "main", "claude/**" ]
+    paths:
+      - "androlua/src/main/jni/**"
+      - ".github/workflows/native.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "androlua/src/main/jni/**"
+  workflow_dispatch:
+
+jobs:
+  ndk-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 选择 NDK
+        id: ndk
+        run: |
+          NDK="$ANDROID_HOME/ndk/27.3.13750724"
+          [ -d "$NDK" ] || NDK="$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)"
+          echo "使用 $NDK"
+          echo "path=$NDK" >> "$GITHUB_OUTPUT"
+
+      - name: ndk-build
+        working-directory: androlua/src/main
+        run: |
+          "${{ steps.ndk.outputs.path }}/ndk-build" \
+            NDK_PROJECT_PATH=. \
+            APP_BUILD_SCRIPT=jni/Android.mk \
+            NDK_APPLICATION_MK=jni/Application.mk \
+            APP_ABI="armeabi-v7a arm64-v8a" \
+            APP_PLATFORM=android-23 \
+            NDK_LIBS_OUT=./libs NDK_OUT=./obj \
+            -j"$(nproc)"
+
+      - name: 产物清单
+        working-directory: androlua/src/main
+        run: |
+          for d in libs/*; do
+            echo "### $d"
+            ls -la "$d"
+          done
+
+      - name: 校验 libluajava.so 导出符号
+        working-directory: androlua/src/main
+        run: |
+          set -euo pipefail
+          grep -v '^#' jni/expected-symbols.txt | sort -u > /tmp/expected.txt
+          for abi in armeabi-v7a arm64-v8a; do
+            nm -D --defined-only "libs/$abi/libluajava.so" \
+              | awk '{print $3}' | grep -E '^(Java_|lua|luaL|luaopen)' | sort -u > "/tmp/got-$abi.txt"
+            missing="$(comm -23 /tmp/expected.txt "/tmp/got-$abi.txt")"
+            if [ -n "$missing" ]; then
+              echo "::error::$abi 缺少以下导出符号："
+              echo "$missing"
+              exit 1
+            fi
+            echo "$abi 符号齐全（$(wc -l < "/tmp/got-$abi.txt") 个导出）"
+          done
+
+      - name: 校验各模块 .so 齐全
+        working-directory: androlua/src/main
+        run: |
+          set -euo pipefail
+          expected="libbson libcjson libcrypt libgl libluajava libluv libmd5 libmime libregex libsensor libsocket libtcc libxml libyaml libzip libzlib"
+          for abi in armeabi-v7a arm64-v8a; do
+            for m in $expected; do
+              if [ ! -f "libs/$abi/$m.so" ]; then
+                echo "::error::$abi 缺少 $m.so"; exit 1
+              fi
+            done
+            echo "$abi 16 个模块齐全"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jniLibs
+          path: androlua/src/main/libs/**
