@@ -40,6 +40,11 @@ typedef struct luaL_Reg {
   lua_CFunction func;
 } luaL_Reg;
 
+/* Lua 5.1 的旧名，luayaml、xml 等模块仍在用 */
+#if defined(LUA_COMPAT_MODULE) && !defined(luaL_reg)
+#define luaL_reg	luaL_Reg
+#endif
+
 
 #define LUAL_NUMSIZES	(sizeof(lua_Integer)*16 + sizeof(lua_Number))
 

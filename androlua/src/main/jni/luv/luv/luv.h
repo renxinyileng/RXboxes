@@ -50,7 +50,8 @@
 #define MAX_TITLE_LENGTH (8192)
 #endif
 
-#if (LUA_VERSION_NUM != 503)
+/* lua-compat-5.3 只在 5.3 之前才需要；Lua 5.4 自身即提供这些接口 */
+#if (LUA_VERSION_NUM < 503)
 #include "c-api/compat-5.3.h"
 #endif
 
