@@ -2,9 +2,10 @@ name: 构建APK
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "claude/**" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -12,38 +13,79 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
-      - name: 设置 JDK 11
-        uses: actions/setup-java@v3
+      - uses: actions/checkout@v4
+
+      - name: 设置 JDK 17
+        uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          java-version: '17'
           distribution: 'temurin'
-          cache: gradle
+
+      - name: 配置 Gradle 缓存
+        uses: gradle/actions/setup-gradle@v4
 
       - name: 授予执行运行gradlew权限
         run: chmod +x gradlew
-      - name: 使用Gradle构建
-        run: ./gradlew build
-        #签名安装包
-      - uses: kevin-david/zipalign-sign-android-release@v1.1
-        name: 签名APK文件
-        #  用于访问动作输出的ID。
-        id: sign_app
-        with:
-          releaseDirectory: app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.KEYSTORE }}
-          alias: ${{ secrets.KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
-          zipAlign: true
-        env:
-          # 覆盖默认的构建工具版本（32.0.0）-- 可选
-          BUILD_TOOLS_VERSION: "32.0.0"
 
-      # 签名发布文件输出的示例用法 -- 无需
-      - uses: actions/upload-artifact@v2
+      - name: 使用Gradle构建
+        run: ./gradlew assembleDebug assembleRelease --stacktrace
+
+      # 仓库配置了签名 secret 时才签名，否则仅做构建校验
+      - name: 检查签名配置
+        id: check_key
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+        run: |
+          if [ -n "$KEYSTORE" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "未配置 KEYSTORE secret，跳过签名步骤。"
+          fi
+
+      # 直接调用 build-tools 里的 zipalign / apksigner，
+      # 不再依赖已停更的第三方签名 Action
+      - name: 签名APK文件
+        if: steps.check_key.outputs.available == 'true'
+        id: sign_app
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          TOOLS="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
+          echo "使用 build-tools $BUILD_TOOLS"
+
+          printf '%s' "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/keystore.jks"
+
+          UNSIGNED="$(ls app/build/outputs/apk/release/*.apk | head -1)"
+          ALIGNED="$RUNNER_TEMP/aligned.apk"
+          SIGNED="$RUNNER_TEMP/app-release-signed.apk"
+
+          "$TOOLS/zipalign" -p -f 4 "$UNSIGNED" "$ALIGNED"
+          "$TOOLS/apksigner" sign \
+            --ks "$RUNNER_TEMP/keystore.jks" \
+            --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --out "$SIGNED" "$ALIGNED"
+          "$TOOLS/apksigner" verify --verbose "$SIGNED"
+
+          echo "signedReleaseFile=$SIGNED" >> "$GITHUB_OUTPUT"
+
+      - name: 上传已签名安装包
+        if: steps.check_key.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
         with:
           name: 安装包
-          path: ${{steps.sign_app.outputs.signedReleaseFile}}
+          path: ${{ steps.sign_app.outputs.signedReleaseFile }}
 
-#          token: ${{ secrets.RELEASE_TOKEN }}
+      - name: 上传未签名安装包
+        if: steps.check_key.outputs.available != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: 安装包-未签名
+          path: app/build/outputs/apk/**/*.apk
