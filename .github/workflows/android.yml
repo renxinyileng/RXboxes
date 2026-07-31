@@ -33,7 +33,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: 使用Gradle构建
-        run: ./gradlew assembleDebug assembleRelease --no-daemon --console=plain
+        run: ./gradlew assembleDebug assembleRelease --console=plain
 
       # 仓库配置了签名 secret 时才签名，否则仅做构建校验
       - name: 检查签名配置
