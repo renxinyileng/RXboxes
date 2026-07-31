@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="rx.team.renxinyileng.box">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- 网络权限 -->
     <uses-permission android:name="android.permission.INTERNET" /> <!-- 防止手机休眠 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" /> <!-- 运行前台服务 -->

@@ -1,41 +1,54 @@
 buildscript {
-    ext.build_gradle_version = '7.2.1'
+    ext {
+        // Android Gradle Plugin
+        agp_version = '9.3.1'
+
+        // 编译环境
+        compile_sdk = 36
+        min_sdk = 21
+        // 保持 29：本工程大量 Lua 脚本直接读写外部存储，
+        // 依赖 requestLegacyExternalStorage，提到 30+ 会触发分区存储导致功能失效。
+        target_sdk = 29
+
+        // 依赖版本
+        appcompat_version = '1.7.1'
+        material_version = '1.14.0'
+        constraintlayout_version = '2.2.2'
+        pdfviewpager_version = '1.1.3'
+        aliyun_player_version = '7.16.0-full'
+        tbssdk_version = '44286'
+        okhttp_version = '3.14.9'
+        jsoup_version = '1.23.1'
+        zip4j_version = '2.11.6'
+        glide_version = '5.0.9'
+    }
 
     repositories {
-        maven { url 'https://maven.aliyun.com/repository/jcenter' } 
-        maven { url 'https://maven.aliyun.com/repository/public/' }
-        maven { url 'https://maven.aliyun.com/repository/google/' }
-        maven { url 'https://maven.aliyun.com/repository/gradle-plugin/' }
-        maven { url 'https://dl.bintray.com/ppartisan/maven/' }
-        maven { url "https://clojars.org/repo/" }
-        maven { url "https://jitpack.io" }
         google()
-        mavenLocal()
         mavenCentral()
-		jcenter()
+        // PdfViewPager 只发布在 jcenter，通过阿里云镜像获取
+        maven { url 'https://maven.aliyun.com/repository/jcenter' }
+        // 阿里云播放器 SDK
+        maven { url 'https://maven.aliyun.com/repository/releases' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://jitpack.io' }
     }
     dependencies {
-        classpath "com.android.tools.build:gradle:$build_gradle_version"
-    }
-    
-}
-allprojects {
-    repositories {
-        maven { url 'https://maven.aliyun.com/repository/jcenter' } 
-        maven { url 'https://maven.aliyun.com/repository/public/' } 
-        maven { url 'https://maven.aliyun.com/repository/google/' }
-        maven { url 'https://maven.aliyun.com/repository/gradle-plugin/' }
-        maven { url 'https://dl.bintray.com/ppartisan/maven/' }
-        maven { url "https://clojars.org/repo/" }
-        maven { url "https://jitpack.io" }
-        maven { url "https://maven.aliyun.com/repository/releases" }
-        mavenLocal()
-        mavenCentral()
-        google()
-        jcenter()
+        classpath "com.android.tools.build:gradle:$agp_version"
     }
 }
 
-task clean(type: Delete) {
-    delete rootProject.buildDir
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://maven.aliyun.com/repository/jcenter' }
+        maven { url 'https://maven.aliyun.com/repository/releases' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://jitpack.io' }
+    }
+}
+
+tasks.register('clean', Delete) {
+    delete rootProject.layout.buildDirectory
 }

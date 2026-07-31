@@ -1,41 +1,42 @@
 apply plugin: 'com.android.library'
 
 android {
-    compileSdkVersion 29
-    buildToolsVersion "30.0.3"
+    namespace 'com.androlua'
+    compileSdk rootProject.ext.compile_sdk
 
     defaultConfig {
-        //applicationId "com.androlua"
-        minSdkVersion 14
-        targetSdkVersion 28
+        minSdk rootProject.ext.min_sdk
+        // 与随附的 AndroLua+ jar / libluajava.so 版本保持一致
         versionCode 1199
-        versionName "5.0.18(1.1)(armeabi-v7a,arm64-v8a)"
+        versionName "5.0.22(armeabi-v7a,arm64-v8a)"
     }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
     buildTypes {
         release {
             minifyEnabled false
-            shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            ndk {abiFilters 'armeabi-v7a', 'x86', 'arm64-v8a'}
+            // jniLibs 只提供 armeabi-v7a / arm64-v8a，原先声明的 x86 并无对应 .so
+            ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
         }
         debug {
             minifyEnabled false
-            shrinkResources false
-            ndk {abiFilters 'armeabi-v7a', 'x86', 'arm64-v8a'}
+            ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
         }
     }
-    sourceSets {
-        main {
-            //jniLibs.srcDirs = ['libs']
-        }
-    }
-    lintOptions {
+
+    lint {
         abortOnError false
         checkReleaseBuilds false
     }
 }
 
 dependencies {
+    // AndroLua+ 5.0.22 预编译 jar（上游未公开该版本源码，只能整包引入）
     api fileTree(dir: 'libs', include: ['*.jar'])
-    implementation 'androidx.appcompat:appcompat:1.0.0'
+    implementation "androidx.appcompat:appcompat:$rootProject.ext.appcompat_version"
 }
