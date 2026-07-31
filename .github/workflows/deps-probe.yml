@@ -4,6 +4,10 @@ name: 探测依赖最新版本
 # 借助 GitHub Actions 查询各依赖的最新版本，确定升级目标后即可删除。
 on:
   workflow_dispatch:
+  push:
+    branches: [ "claude/**" ]
+    paths:
+      - ".github/workflows/deps-probe.yml"
 
 jobs:
   probe:
