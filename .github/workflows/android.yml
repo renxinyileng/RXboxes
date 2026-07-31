@@ -7,10 +7,15 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
 
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +33,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: 使用Gradle构建
-        run: ./gradlew assembleDebug assembleRelease
+        run: ./gradlew assembleDebug assembleRelease --no-daemon --console=plain
 
       # 仓库配置了签名 secret 时才签名，否则仅做构建校验
       - name: 检查签名配置
