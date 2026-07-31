@@ -1,0 +1,73 @@
+name: 探测依赖最新版本
+
+# 临时工作流：本地网络无法访问 dl.google.com / maven.aliyun.com，
+# 借助 GitHub Actions 查询各依赖的最新版本，确定升级目标后即可删除。
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gradle 最新版本
+        run: curl -s https://services.gradle.org/versions/current
+
+      - name: Android Gradle Plugin
+        run: |
+          curl -s https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/maven-metadata.xml \
+            | grep -oE '<version>[^<]+</version>' | tail -25
+
+      - name: AndroidX / Material / 其它 Google 仓库依赖
+        run: |
+          probe() {
+            echo "### $1"
+            curl -s "https://dl.google.com/dl/android/maven2/$2/maven-metadata.xml" \
+              | grep -oE '<version>[^<]+</version>' | tail -8
+          }
+          probe appcompat androidx/appcompat/appcompat
+          probe material com/google/android/material/material
+          probe constraintlayout androidx/constraintlayout/constraintlayout
+          probe core-ktx androidx/core/core
+          probe swiperefreshlayout androidx/swiperefreshlayout/swiperefreshlayout
+          probe viewpager androidx/viewpager/viewpager
+
+      - name: Maven Central 依赖
+        run: |
+          probe() {
+            echo "### $1"
+            curl -s "https://repo1.maven.org/maven2/$2/maven-metadata.xml" \
+              | grep -oE '<latest>[^<]+</latest>|<release>[^<]+</release>'
+          }
+          probe jsoup org/jsoup/jsoup
+          probe okhttp3 com/squareup/okhttp3/okhttp
+          probe okio com/squareup/okio/okio
+          probe zip4j net/lingala/zip4j/zip4j
+          probe glide com/github/bumptech/glide/glide
+          probe pdfviewpager es/voghdev/pdfviewpager/library
+
+      - name: 阿里云播放器 SDK
+        run: |
+          for repo in releases public; do
+            echo "### maven.aliyun.com/repository/$repo"
+            curl -s "https://maven.aliyun.com/repository/$repo/com/aliyun/sdk/android/AliyunPlayer/maven-metadata.xml" \
+              | grep -oE '<version>[^<]+</version>' | tail -10
+          done
+
+      - name: 腾讯 TBS SDK
+        run: |
+          for repo in releases public; do
+            echo "### maven.aliyun.com/repository/$repo"
+            curl -s "https://maven.aliyun.com/repository/$repo/com/tencent/tbs/tbssdk/maven-metadata.xml" \
+              | grep -oE '<version>[^<]+</version>' | tail -10
+          done
+          echo "### repo1 tbssdk"
+          curl -s "https://repo1.maven.org/maven2/com/tencent/tbs/tbssdk/maven-metadata.xml" \
+            | grep -oE '<version>[^<]+</version>' | tail -10
+
+      - name: 构建环境自带的 SDK / NDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms" 2>/dev/null
+          ls "$ANDROID_HOME/build-tools" 2>/dev/null
+          ls "$ANDROID_HOME/ndk" 2>/dev/null
+          java -version
