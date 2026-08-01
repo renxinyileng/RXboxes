@@ -1,41 +1,53 @@
 apply plugin: 'com.android.library'
 
 android {
-    compileSdkVersion 29
-    buildToolsVersion "30.0.3"
+    namespace 'com.androlua'
+    compileSdk rootProject.ext.compile_sdk
+
+    // Lua 解释器与各原生模块改为随工程一起从源码编译，源码在 src/main/jni
+    ndkVersion rootProject.ext.ndk_version
 
     defaultConfig {
-        //applicationId "com.androlua"
-        minSdkVersion 14
-        targetSdkVersion 28
-        versionCode 1199
-        versionName "5.0.18(1.1)(armeabi-v7a,arm64-v8a)"
+        minSdk rootProject.ext.min_sdk
+        externalNativeBuild {
+            ndkBuild {
+                arguments "NDK_APPLICATION_MK:=$projectDir/src/main/jni/Application.mk"
+            }
+        }
     }
+
+    externalNativeBuild {
+        ndkBuild {
+            path 'src/main/jni/Android.mk'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
     buildTypes {
         release {
             minifyEnabled false
-            shrinkResources false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            ndk {abiFilters 'armeabi-v7a', 'x86', 'arm64-v8a'}
+            // AGP 9 起 proguard-android.txt 因内含 -dontoptimize 已不再支持
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
         }
         debug {
             minifyEnabled false
-            shrinkResources false
-            ndk {abiFilters 'armeabi-v7a', 'x86', 'arm64-v8a'}
+            ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
         }
     }
-    sourceSets {
-        main {
-            //jniLibs.srcDirs = ['libs']
-        }
-    }
-    lintOptions {
+
+    lint {
         abortOnError false
         checkReleaseBuilds false
     }
 }
 
 dependencies {
+    // AndroLua+ 5.0.22 预编译 jar（上游未公开该版本源码，只能整包引入）
     api fileTree(dir: 'libs', include: ['*.jar'])
-    implementation 'androidx.appcompat:appcompat:1.0.0'
+    implementation "androidx.appcompat:appcompat:$rootProject.ext.appcompat_version"
 }

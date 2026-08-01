@@ -82,7 +82,7 @@ end
 dlg=Dialog(activity,android.R.style.Theme_Holo_Light)
 dlg.setTitle("布局表预览")
 function show(s)
-  dlg.setContentView(loadlayout3(loadstring("return "..s)(),{}))
+  dlg.setContentView(loadlayout3(load("return "..s)(),{}))
   dlg.show()
 end
 
@@ -107,7 +107,7 @@ end
 
 function click4()
   local str=edit.getText().toString()
-  layout.main=loadstring("return "..str)()
+  layout.main=load("return "..str)()
   activity.setContentView(loadlayout2(layout.main,{}))
   dlg2.hide()
 

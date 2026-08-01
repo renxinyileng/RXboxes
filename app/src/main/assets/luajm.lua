@@ -84,7 +84,10 @@ end
 -- 定义一个函数，用于将混淆后的 Lua 代码进行解混淆
 local function deobfuscate(code)
     local reversed = string.reverse(code) -- 将混淆后的代码反转
-    local decoded =    decode(reversed) -- 对反转后的字符串进行解密
+    local decoded = decode(reversed) -- 对反转后的字符串进行解密
+    return decoded -- 返回解混淆后的代码
+end
+
 local function encode(str)
     local len = string.len(str)
     local ret = ""

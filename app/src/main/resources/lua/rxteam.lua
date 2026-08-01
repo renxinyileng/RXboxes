@@ -163,10 +163,10 @@ function 弹窗UI(标题, 内容, 确认事件, 取消事件, 按钮1, 按钮2, 
     end
 
     确认.onClick = function()
-        assert(loadstring(确认事件))()
+        assert(load(确认事件))()
     end;
     取消.onClick = function()
-        assert(loadstring(取消事件))()
+        assert(load(取消事件))()
     end;
     确认.foreground = 波纹特效v2(0xFFCECECE)
     取消.foreground = 波纹特效v2(0xFFCECECE)
