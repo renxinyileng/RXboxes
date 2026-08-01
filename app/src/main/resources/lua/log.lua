@@ -1,7 +1,7 @@
 require 'init'
 --debugmode = false
 _G=_G
-if this~=activity or ~debugmode then
+if this~=activity or not debugmode then
   _G.safe_error=print
   _G.explain=print
   _G.info=print
@@ -682,7 +682,7 @@ if this~=activity or ~debugmode then
 
   local _ass=assert
   function assert(a,...)
-    if ~a then
+    if not a then
       log(0xFFe90000,1,...)
     end
     return _ass(a,...)
@@ -900,7 +900,7 @@ if this~=activity or ~debugmode then
       local t,n={},0
       str:gsub('[^\n\n]+',function(w)
         if n%2==0 then
-          if ~w:find('^%[') then
+          if not w:find('^%[') then
             t[#t]=string.format('%s\n%s',t[#t],w)
            else
             t[#t+1]=w

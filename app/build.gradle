@@ -58,6 +58,9 @@ dependencies {
     implementation "androidx.appcompat:appcompat:$rootProject.ext.appcompat_version"
     implementation "com.google.android.material:material:$rootProject.ext.material_version"
     implementation "androidx.constraintlayout:constraintlayout:$rootProject.ext.constraintlayout_version"
+    // hs.lua 用到，原先靠 assets 里的 android-support-v4.dex 提供，
+    // 那种从可写目录加载 dex 的方式已被 Android 拒绝
+    implementation "androidx.swiperefreshlayout:swiperefreshlayout:$rootProject.ext.swiperefreshlayout_version"
     implementation "es.voghdev.pdfviewpager:library:$rootProject.ext.pdfviewpager_version"
     implementation "com.aliyun.sdk.android:AliyunPlayer:$rootProject.ext.aliyun_player_version"
     implementation "com.tencent.tbs:tbssdk:$rootProject.ext.tbssdk_version"
