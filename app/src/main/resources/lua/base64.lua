@@ -1,4 +1,7 @@
-module("base64", package.seeall)
+-- module()/package.seeall 自 Lua 5.2 起已废弃。
+-- 这里改为显式模块表，并保留同名全局，原有调用方式不受影响。
+local base64 = {}
+_G.base64 = base64
 
 local base64chars = {
     [0]='A',  [1]='B',  [2]='C',  [3]='D',  [4]='E',  [5]='F',  [6]='G',  [7]='H', 
@@ -11,7 +14,7 @@ local base64chars = {
    [56]='4', [57]='5', [58]='6', [59]='7', [60]='8', [61]='9', [62]='-', [63]='_'
 }
 
-function encode(data)
+function base64.encode(data)
    local bytes = {}
    local result = ""
    for i = 0, data:len()-1, 3 do
@@ -48,7 +51,7 @@ local base64bytes = {
    ['=']=nil
 }
 
-function decode(data)
+function base64.decode(data)
    local chars = {}
    local result = ""
    for i = 0, data:len()-1, 4 do
@@ -69,3 +72,5 @@ function decode(data)
    end
    return result
 end
+
+return base64

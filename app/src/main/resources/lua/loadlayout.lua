@@ -51,8 +51,8 @@ local function alyloader(path)
   if string.sub(s,1,4)=="\27Lua" then
     return assert(loadfile(path)),path
   else
-    --return assert(loadstring("return "..s, path:match("[^/]+/[^/]+$"),"bt")),path
-    local f,st=loadstring("return "..s, path:match("[^/]+/[^/]+$"),"bt")
+    --return assert(load("return "..s, path:match("[^/]+/[^/]+$"),"bt")),path
+    local f,st=load("return "..s, path:match("[^/]+/[^/]+$"),"bt")
     if st then
       error(st:gsub("%b[]",path,1),0)
     end
@@ -359,7 +359,7 @@ local function checkValues(...)
   for n=1,#vars do
     vars[n]=checkValue(vars[n])
   end
-  return unpack(vars)
+  return table.unpack(vars)
 end
 
 local function getattr(s)
@@ -542,7 +542,7 @@ local function setattribute(root,view,params,k,v,ids)
     if k=="Text" or k=="Title" or k=="Subtitle" then
       view["set"..k](v)
     elseif not k:find("^On") and not k:find("^Tag") and type(v)=="table" then
-      view["set"..k](checkValues(unpack(v)))
+      view["set"..k](checkValues(table.unpack(v)))
     else
       view["set"..k](checkValue(v))
     end
@@ -623,7 +623,7 @@ local function loadlayout(t,root,group)
 
   --设置padding属性
   if t.padding and type(t.padding)=="table" then
-    view.setPadding(checkValues(unpack(t.padding)))
+    view.setPadding(checkValues(table.unpack(t.padding)))
   elseif t.padding or t.paddingLeft or t.paddingTop or t.paddingRight or t.paddingBottom then
     view.setPadding(checkValues(t.paddingLeft or t.padding or 0, t.paddingTop or t.padding or 0, t.paddingRight or t.padding or 0, t.paddingBottom or t.padding or 0))
   end
