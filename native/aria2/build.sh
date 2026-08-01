@@ -90,8 +90,9 @@ build_abi() {
     cp -r "$WORK/openssl" "$WORK/build-openssl-$abi"
     (
       cd "$WORK/build-openssl-$abi"
+      # 静态库最终要链进 libaria2jni.so，所有目标文件都必须是位置无关代码
       ANDROID_NDK_ROOT="$ANDROID_NDK" ./Configure "$(openssl_target "$abi")" \
-        -D__ANDROID_API__="$API" no-shared no-tests no-ui-console \
+        -D__ANDROID_API__="$API" -fPIC no-shared no-tests no-ui-console \
         --prefix="$prefix" --openssldir="$prefix/ssl"
       make -j"$(nproc)" build_libs
       make install_dev
@@ -112,6 +113,8 @@ build_abi() {
       OPENSSL_CFLAGS="-I$prefix/include" \
       OPENSSL_LIBS="-L$prefix/lib -lssl -lcrypto" \
       CPPFLAGS="-I$prefix/include" \
+      CFLAGS="-fPIC -O2" \
+      CXXFLAGS="-fPIC -O2" \
       LDFLAGS="-L$prefix/lib" \
       "$WORK/aria2/configure" \
         --host="$host" \
