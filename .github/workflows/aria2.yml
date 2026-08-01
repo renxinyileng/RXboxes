@@ -28,7 +28,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: 安装 autotools
-        run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool pkg-config
+        # aria2 用了 AM_GNU_GETTEXT，autoreconf 需要 gettext 提供的 autopoint
+        run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool pkg-config gettext
 
       - name: 选择 NDK
         id: ndk
