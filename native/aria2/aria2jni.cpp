@@ -25,10 +25,27 @@
 
 namespace {
 
+enum StartState { kPending, kStarted, kFailed };
+
 std::atomic<bool> gRunning{false};
 std::atomic<bool> gStopRequested{false};
+bool gJoinable = false;
 pthread_t gThread;
 aria2::KeyVals gOptions;
+
+// 用来把"会话是否建起来了"这个结果从工作线程回传给 nativeStart，
+// 否则 Java 侧拿到的 true 只代表线程创建成功，并不代表 aria2 真的起来了
+pthread_mutex_t gStartMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t gStartCond = PTHREAD_COND_INITIALIZER;
+StartState gStartState = kPending;
+
+void publishStartState(StartState state)
+{
+    pthread_mutex_lock(&gStartMutex);
+    gStartState = state;
+    pthread_cond_broadcast(&gStartCond);
+    pthread_mutex_unlock(&gStartMutex);
+}
 
 /*
  * aria2 的 Session 不是线程安全的，所有 API 调用都必须发生在同一个线程上，
@@ -39,6 +56,7 @@ void* aria2Worker(void*)
     if (aria2::libraryInit() != 0) {
         LOGE("libraryInit 失败");
         gRunning.store(false);
+        publishStartState(kFailed);
         return nullptr;
     }
 
@@ -50,13 +68,21 @@ void* aria2Worker(void*)
 
     aria2::Session* session = aria2::sessionNew(gOptions, config);
     if (session == nullptr) {
-        LOGE("sessionNew 失败，请检查传入的选项");
+        // aria2 的选项解析错误只写到 stderr，Android 上等于丢弃，
+        // 所以这里把传进去的选项打出来，否则失败原因无从查起
+        LOGE("sessionNew 失败，实际传入的 %zu 项选项如下：", gOptions.size());
+        for (const auto& kv : gOptions) {
+            LOGE("    %s = %s", kv.first.c_str(), kv.second.c_str());
+        }
         aria2::libraryDeinit();
         gRunning.store(false);
+        publishStartState(kFailed);
         return nullptr;
     }
 
     LOGI("aria2 会话已启动");
+    publishStartState(kStarted);
+
     while (!gStopRequested.load()) {
         // RUN_ONCE 每次事件轮询最多阻塞 1 秒，便于及时响应停止请求
         int rv = aria2::run(session, aria2::RUN_ONCE);
@@ -127,9 +153,26 @@ Java_com_rxteam_aria2_Aria2_nativeStart(JNIEnv* env, jclass, jobjectArray keys,
 
     gStopRequested.store(false);
     gRunning.store(true);
+    gStartState = kPending;
     if (pthread_create(&gThread, nullptr, aria2Worker, nullptr) != 0) {
         LOGE("创建 aria2 工作线程失败");
         gRunning.store(false);
+        return JNI_FALSE;
+    }
+    gJoinable = true;
+
+    // 等工作线程把 session 建起来（或失败），再把真实结果返回给 Java。
+    // 建会话包括绑定 RPC 端口，很快，不至于卡住调用方太久。
+    pthread_mutex_lock(&gStartMutex);
+    while (gStartState == kPending) {
+        pthread_cond_wait(&gStartCond, &gStartMutex);
+    }
+    const StartState state = gStartState;
+    pthread_mutex_unlock(&gStartMutex);
+
+    if (state != kStarted) {
+        pthread_join(gThread, nullptr);
+        gJoinable = false;
         return JNI_FALSE;
     }
     return JNI_TRUE;
@@ -138,23 +181,19 @@ Java_com_rxteam_aria2_Aria2_nativeStart(JNIEnv* env, jclass, jobjectArray keys,
 JNIEXPORT void JNICALL
 Java_com_rxteam_aria2_Aria2_nativeStop(JNIEnv*, jclass)
 {
-    if (!gRunning.load() && !gStopRequested.load()) {
+    if (!gJoinable) {
         return;
     }
+    // 事件循环自己退出的情况下 gRunning 已经是 false，线程仍然需要 join
     gStopRequested.store(true);
     pthread_join(gThread, nullptr);
+    gJoinable = false;
 }
 
 JNIEXPORT jboolean JNICALL
 Java_com_rxteam_aria2_Aria2_nativeIsRunning(JNIEnv*, jclass)
 {
     return gRunning.load() ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT jstring JNICALL
-Java_com_rxteam_aria2_Aria2_nativeVersion(JNIEnv* env, jclass)
-{
-    return env->NewStringUTF("libaria2");
 }
 
 } // extern "C"
