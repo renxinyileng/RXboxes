@@ -20,6 +20,10 @@ concurrency:
   group: aria2-${{ github.ref }}
   cancel-in-progress: true
 
+# 编好的 so 要提交回分支
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -77,3 +81,23 @@ jobs:
         with:
           name: aria2jni
           path: native/aria2/out/**/libaria2jni.so
+
+      # 产物直接落进 jniLibs 并提交回本分支，APK 构建才拿得到。
+      # jniLibs 不在本工作流的 paths 里，这次提交不会再触发自己。
+      - name: 提交 so 到 app/src/main/jniLibs
+        run: |
+          set -euo pipefail
+          for d in native/aria2/out/*; do
+            abi="$(basename "$d")"
+            mkdir -p "app/src/main/jniLibs/$abi"
+            cp "$d/libaria2jni.so" "app/src/main/jniLibs/$abi/libaria2jni.so"
+          done
+          git add app/src/main/jniLibs
+          if git diff --cached --quiet; then
+            echo "so 无变化，不提交"
+            exit 0
+          fi
+          git -c user.name="Claude" -c user.email="noreply@anthropic.com" \
+            commit -m "build(aria2): 更新 libaria2jni.so（由 aria2 工作流编译）" \
+                   -m "来自 ${{ github.sha }} 的构建产物。"
+          git push origin "HEAD:${{ github.ref_name }}"
