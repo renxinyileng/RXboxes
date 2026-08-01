@@ -1,6 +1,9 @@
-module("hex", package.seeall)
+-- module()/package.seeall 自 Lua 5.2 起已废弃。
+-- 这里改为显式模块表，并保留同名全局，原有调用方式不受影响。
+local hex = {}
+_G.hex = hex
 
-function dump(v, delimiter, stx, etx)
+function hex.dump(v, delimiter, stx, etx)
 
    local dump = ""
 
@@ -16,12 +19,12 @@ function dump(v, delimiter, stx, etx)
    return dump
 end
 
-function smart_dump(v)
-   v = v:gsub( "%c+", function (raw) return dump(raw, "", "<", ">") end  );
+function hex.smart_dump(v)
+   v = v:gsub( "%c+", function (raw) return hex.dump(raw, "", "<", ">") end  );
    return v
 end
 
-function pack(v)
+function hex.pack(v)
 
    v = v:gsub( "%s+", "" )
 
@@ -66,7 +69,9 @@ function pack(v)
    return pack
 end
 
-function smart_pack(v)
-   local packed = v:gsub( "<(%x+)>", function (dump) return pack(dump) end )
+function hex.smart_pack(v)
+   local packed = v:gsub( "<(%x+)>", function (dump) return hex.pack(dump) end )
    return packed
 end
+
+return hex

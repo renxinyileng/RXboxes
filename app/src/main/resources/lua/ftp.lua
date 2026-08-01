@@ -89,7 +89,7 @@ function metat.__index:port(ip, port)
         ip, port = self.try(self.server:getsockname())
         self.try(self.server:settimeout(_M.TIMEOUT))
     end
-    local pl = math.mod(port, 256)
+    local pl = port % 256
     local ph = (port - pl)/256
     local arg = string.gsub(string.format("%s,%d,%d", ip, ph, pl), "%.", ",")
     self.try(self.tp:command("port", arg))
@@ -214,13 +214,14 @@ local function tput(putt)
     return sent
 end
 
-local default = {
+-- 不能叫 default：AndroLua+ 把 default 作为保留字（switch/case 语法）
+local defaults = {
     path = "/",
     scheme = "ftp"
 }
 
 local function parse(u)
-    local t = socket.try(url.parse(u, default))
+    local t = socket.try(url.parse(u, defaults))
     socket.try(t.scheme == "ftp", "wrong scheme '" .. t.scheme .. "'")
     socket.try(t.host, "missing hostname")
     local pat = "^type=(.)$"
