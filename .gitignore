@@ -36,3 +36,5 @@ androlua/src/main/libs/
 # aria2 交叉编译中间产物
 native/aria2/.work/
 native/aria2/out/
+
+gradle/gradle-daemon-jvm.properties
