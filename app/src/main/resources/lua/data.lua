@@ -102,9 +102,9 @@ data.getFileList=function(path)
   local list=luajava.astable(data.getDoucmentFile(path).listFiles())
   local s=utf8.sub(path,-1)
   
-  table.foreach(list,function(k,v)
+  for k,v in pairs(list) do
     list[k]=path..(s=="/" and "" or "/")..v.name
-  end)
+  end
   return list
 end
 

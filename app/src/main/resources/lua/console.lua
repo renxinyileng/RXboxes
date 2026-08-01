@@ -1,4 +1,9 @@
-module(...,package.seeall)
+-- module()/package.seeall 自 Lua 5.2 起已废弃。
+-- 改为显式模块表，模块名仍取 require 传入的名字，并保留同名全局，
+-- 使 import "console" 等原有用法不受影响。
+local modname = ... or "console"
+local console = {}
+_G[modname] = console
 --by nirenr
 
 local function ps(str)
@@ -27,7 +32,7 @@ local function _format()
 end
 
 
-function format(Text)
+function console.format(Text)
   local t=os.clock()
   local Format=_format()
   Text=Text:gsub('[ \t]*([^\r\n]+)',function(str)return Format(str)end)
@@ -36,7 +41,7 @@ function format(Text)
 end
 
 
-function build(path)
+function console.build(path)
   if path then
     local str,st=loadfile(path)
     if st then
@@ -57,7 +62,7 @@ function build(path)
   end
 end
 
-function build_aly(path2)
+function console.build_aly(path2)
   if path2 then
     local f,st=io.open(path2)
     if st then
@@ -67,7 +72,7 @@ function build_aly(path2)
     f:close()
     str=string.format("local layout=%s\nreturn layout",str)
     local path=path2..'c'
-    str,st=loadstring(str,path2:match("[^/]+/[^/]+$"),"bt")
+    str,st=load(str,path2:match("[^/]+/[^/]+$"),"bt")
     if st then
       return nil,st:gsub("%b[]",path2,1)
     end
@@ -85,3 +90,4 @@ function build_aly(path2)
   end
 end
 
+return console

@@ -1,57 +1,72 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 32
-    buildToolsVersion "32.0.0"
+    namespace 'rx.team.renxinyileng.box'
+    compileSdk rootProject.ext.compile_sdk
 
     defaultConfig {
         applicationId "rx.team.renxinyileng.box"
-        minSdkVersion 21
+        minSdk rootProject.ext.min_sdk
         //原作者没更新到最新安卓版本一动就死
-        targetSdkVersion 29
+        targetSdk rootProject.ext.target_sdk
         versionCode 20231120
         versionName "1.0.0正式版"
     }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
     signingConfigs {
         release {
-            storeFile file(System.getenv("KEYSTORE") ?:"keystore.jks")
+            storeFile file(System.getenv("KEYSTORE") ?: "keystore.jks")
             storePassword System.getenv("KEYSTORE_PASSWORD")
             keyAlias System.getenv("KEY_ALIAS")
             keyPassword System.getenv("KEY_PASSWORD")
         }
     }
+
     buildTypes {
         release {
             //不可开混淆一开就炸
             minifyEnabled false
             shrinkResources false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),'proguard-rules.pro'
-            ndk {abiFilters 'arm64-v8a'}
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            ndk { abiFilters 'arm64-v8a' }
         }
         debug {
             minifyEnabled false
             shrinkResources false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),'proguard-rules.pro'
-            ndk {abiFilters 'arm64-v8a'}
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            ndk { abiFilters 'arm64-v8a' }
         }
     }
-    lintOptions {
-        checkReleaseBuilds false
-        abortOnError false
-    }
-    lintOptions {
+
+    lint {
         abortOnError false
         checkReleaseBuilds false
     }
 }
 
 dependencies {
-    implementation fileTree(dir: "libs", include: ["*.jar","*.aar"])
+    // 本地 jar：AndroLua 生态里没有 Maven 发布的部分
+    //   LuaCustRecyclerAdapter.jar / LuaGoMyServer.jar / zip4j.jar(org.manalua 封装) / svg-android
+    implementation fileTree(dir: "libs", include: ["*.jar", "*.aar"])
     implementation project(':androlua')
-    implementation 'androidx.appcompat:appcompat:1.0.0'
-    implementation 'com.google.android.material:material:1.0.0'
-    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
-    implementation 'es.voghdev.pdfviewpager:library:1.1.2'
-    implementation 'com.aliyun.sdk.android:AliyunPlayer:5.5.4.0-full'
-    implementation 'com.tencent.tbs:tbssdk:44286'
+
+    implementation "androidx.appcompat:appcompat:$rootProject.ext.appcompat_version"
+    implementation "com.google.android.material:material:$rootProject.ext.material_version"
+    implementation "androidx.constraintlayout:constraintlayout:$rootProject.ext.constraintlayout_version"
+    implementation "es.voghdev.pdfviewpager:library:$rootProject.ext.pdfviewpager_version"
+    implementation "com.aliyun.sdk.android:AliyunPlayer:$rootProject.ext.aliyun_player_version"
+    implementation "com.tencent.tbs:tbssdk:$rootProject.ext.tbssdk_version"
+
+    // 原先以 libs/*.jar 形式内置，改为 Maven 依赖便于持续升级
+    // okhttp 保持 3.x：Lua 脚本按 Java 风格调用 response.code()/body().string()，
+    // 4.x 起这些方法被 Kotlin 属性取代，Java/Lua 侧无法调用。
+    implementation "com.squareup.okhttp3:okhttp:$rootProject.ext.okhttp_version"
+    implementation "org.jsoup:jsoup:$rootProject.ext.jsoup_version"
+    implementation "net.lingala.zip4j:zip4j:$rootProject.ext.zip4j_version"
+    implementation "com.github.bumptech.glide:glide:$rootProject.ext.glide_version"
 }
