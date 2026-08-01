@@ -32,4 +32,9 @@ google-services.json
 # ndk-build 本地产物
 androlua/src/main/obj/
 androlua/src/main/libs/
+
+# aria2 交叉编译中间产物
+native/aria2/.work/
+native/aria2/out/
+
 gradle/gradle-daemon-jvm.properties

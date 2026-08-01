@@ -123,22 +123,49 @@ sha256sign = sha256.sha256(tostring(pm))
 if (File(数据存储 .. tostring(sha256sgin)).exists() == false) then
     提示("by:人心已冷\nqq:2713359049")
     File(数据存储 .. sha256sign).mkdir()
---[[    import "android.os.SystemProperties"
-      if tostring(SystemProperties.get("ro.product.cpu.abi")) == "arm64-v8a" and tostring(io.popen("uname -m"):read("*l")) == "aarch64" then
-          提示("符合aric2软件的开启条件正在尝试开启")
-          File(tostring(Environment.getExternalStorageDirectory().getAbsolutePath() .. "/Download/RX盒子/aria2ini/")).mkdir()
-          io.popen("chmod 777 " .. activity.getLuaDir() .. "/www/aria2/android/aria2c"):read("*all")
-          print(io.popen("uname -m"):read("*l"))
-          --print(APPassets目录)
-          下载路径 = tostring(Environment.getExternalStorageDirectory()) .. "/Download/RX盒子/aria2"
-          会话文件路径 = tostring(activity.getLuaDir("/aria2/aria2.session")) --任务保存文件。不用修改
-          conf = tostring("\n" .. "dir=" .. 下载路径 .. "\n" .. "input-file=" .. 会话文件路径 .. "\n" .. "save-session=" .. 会话文件路径)
-          io.open(tostring(activity.getLuaDir("/aria2/aria2.conf")), "a+"):write(conf):close()
-          print(io.popen("/data/data/rx.team.renxinyileng.box/files/www/aria2/android/aria2c --conf-path=/data/data/rx.team.renxinyileng.box/files/www/aria2/aria2.conf -D"):read("*all"))
-      else
-          提示("不符合aria2软件的开启条件")
-      end]]
 end
+
+-- 启动 aria2 下载核心
+--
+-- 以前的做法是把 assets 里的 aria2c 复制到应用私有目录、chmod 777 之后 exec。
+-- 从 Android 10（API 29）起，targetSdk >= 29 的应用不允许执行自己可写目录里的
+-- 文件（W^X），这条路已经走不通，所以这段代码之前一直是注释掉的状态。
+-- 现在改成通过 JNI 把 libaria2 链进本进程运行，没有子进程，也就不受该限制。
+-- RPC 行为和独立的 aria2c 一致，AriaNg 前端（8080 端口那个）不用改。
+xpcall(function()
+    -- 放在 xpcall 里：Aria2 类初始化时会 System.loadLibrary("aria2jni")，
+    -- 万一该 ABI 没打进 so，只让下载核心不可用，不要拖垮整个启动流程
+    import "com.rxteam.aria2.Aria2"
+    import "java.util.HashMap"
+    if Aria2.isRunning() then
+        return
+    end
+    local 下载路径 = tostring(Environment.getExternalStorageDirectory()) .. "/Download/RX盒子/aria2"
+    File(下载路径).mkdirs()
+    -- input-file 指向的文件必须存在，否则引擎启动时会报错
+    local 会话文件路径 = 下载路径 .. "/aria2.session"
+    local 会话文件 = File(会话文件路径)
+    if not 会话文件.exists() then
+        会话文件.createNewFile()
+    end
+    -- 这几项按运行时的真实路径覆盖 aria2.conf 里的默认值
+    local 覆盖项 = HashMap()
+    覆盖项.put("dir", 下载路径)
+    覆盖项.put("input-file", 会话文件路径)
+    覆盖项.put("save-session", 会话文件路径)
+    -- 非独立进程模式下 aria2 的控制台输出是关掉的，Android 上 stderr 也等于丢弃，
+    -- 出问题时只能靠这个文件排查。warn 级别，不会写大
+    覆盖项.put("log", 下载路径 .. "/aria2.log")
+    覆盖项.put("log-level", "warn")
+    local 配置文件 = activity.getLuaDir() .. "/www/aria2/aria2.conf"
+    if Aria2.startWithConf(配置文件, 覆盖项) then
+        print("aria2 下载核心已启动，下载目录：" .. 下载路径)
+    else
+        提示("aria2 下载核心启动失败")
+    end
+end, function(e)
+    print("aria2 启动异常：" .. tostring(e))
+end)
 import "android.graphics.PixelFormat"
 import "com.tencent.smtt.sdk.WebViewClient"
 import "com.tencent.smtt.sdk.WebView"
