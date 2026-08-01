@@ -2,10 +2,7 @@ package com.rxteam.aria2;
 
 import android.util.Log;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -55,13 +52,24 @@ public final class Aria2 {
     }
 
     /**
-     * 读取 aria2.conf 后启动。
+     * 按配置文件启动，等价于 {@code aria2c --conf-path=<confPath>}。
      *
-     * @param confPath 配置文件路径，不存在时按空配置启动
+     * <p>配置文件由 aria2 自己解析（把路径作为 {@code conf-path} 选项传下去），
+     * 这里不再自行解析，少一个出错的环节。{@code override} 里的项在配置文件
+     * 之后生效，会覆盖同名配置。
+     *
+     * @param confPath 配置文件路径；不存在时按 {@code no-conf} 启动，
+     *                 以免 aria2 去找 {@code $HOME/.aria2/aria2.conf}
      * @param override 需要覆盖/追加的选项，可为 null
      */
     public static synchronized boolean startWithConf(String confPath, Map<String, String> override) {
-        Map<String, String> options = readConf(confPath);
+        Map<String, String> options = new LinkedHashMap<String, String>();
+        if (confPath != null && new File(confPath).isFile()) {
+            options.put("conf-path", confPath);
+        } else {
+            Log.w(TAG, "配置文件不存在，按默认选项启动：" + confPath);
+            options.put("no-conf", "true");
+        }
         if (override != null) {
             options.putAll(override);
         }
@@ -75,60 +83,6 @@ public final class Aria2 {
 
     public static boolean isRunning() {
         return nativeIsRunning();
-    }
-
-    /**
-     * 解析 aria2 配置文件。格式为每行 {@code key=value}，{@code #} 开头为注释。
-     * 文件不存在或读取失败时返回空表，不抛异常。
-     */
-    public static Map<String, String> readConf(String confPath) {
-        Map<String, String> options = new LinkedHashMap<String, String>();
-        if (confPath == null) {
-            return options;
-        }
-        File file = new File(confPath);
-        if (!file.isFile()) {
-            Log.w(TAG, "配置文件不存在：" + confPath);
-            return options;
-        }
-        BufferedReader reader = null;
-        try {
-            reader = new BufferedReader(new FileReader(file));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                line = line.trim();
-                if (line.length() == 0 || line.charAt(0) == '#' || line.charAt(0) == ';') {
-                    continue;
-                }
-                int i = line.indexOf('=');
-                String key;
-                String value;
-                if (i < 0) {
-                    // 形如 "continue" 的开关项，等价于 continue=true
-                    key = line;
-                    value = "true";
-                } else {
-                    key = line.substring(0, i).trim();
-                    value = line.substring(i + 1).trim();
-                }
-                if (key.startsWith("--")) {
-                    key = key.substring(2);
-                }
-                if (key.length() > 0) {
-                    options.put(key, value);
-                }
-            }
-        } catch (IOException e) {
-            Log.w(TAG, "读取配置文件失败：" + confPath, e);
-        } finally {
-            if (reader != null) {
-                try {
-                    reader.close();
-                } catch (IOException ignored) {
-                }
-            }
-        }
-        return options;
     }
 
     private static native boolean nativeStart(String[] keys, String[] values);

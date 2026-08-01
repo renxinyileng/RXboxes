@@ -153,6 +153,10 @@ xpcall(function()
     覆盖项.put("dir", 下载路径)
     覆盖项.put("input-file", 会话文件路径)
     覆盖项.put("save-session", 会话文件路径)
+    -- 非独立进程模式下 aria2 的控制台输出是关掉的，Android 上 stderr 也等于丢弃，
+    -- 出问题时只能靠这个文件排查。warn 级别，不会写大
+    覆盖项.put("log", 下载路径 .. "/aria2.log")
+    覆盖项.put("log-level", "warn")
     local 配置文件 = activity.getLuaDir() .. "/www/aria2/aria2.conf"
     if Aria2.startWithConf(配置文件, 覆盖项) then
         print("aria2 下载核心已启动，下载目录：" .. 下载路径)

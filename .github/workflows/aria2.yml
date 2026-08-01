@@ -14,7 +14,7 @@ on:
     inputs:
       abis:
         description: "要编译的 ABI（空格分隔）"
-        default: "arm64-v8a armeabi-v7a"
+        default: "arm64-v8a"
 
 concurrency:
   group: aria2-${{ github.ref }}
@@ -45,8 +45,9 @@ jobs:
         run: |
           set -o pipefail
           chmod +x native/aria2/build.sh
+          # 只编 arm64-v8a：app/build.gradle 的 abiFilters 也只打包这一个
           ABIS="${{ github.event.inputs.abis }}"
-          [ -z "$ABIS" ] && ABIS="arm64-v8a armeabi-v7a"
+          [ -z "$ABIS" ] && ABIS="arm64-v8a"
           ./native/aria2/build.sh $ABIS 2>&1 | tee /tmp/aria2-build.log
 
       - name: 错误摘要

@@ -70,15 +70,30 @@ openssl_target() {
 
 build_abi() {
   local abi="$1"
-  local triple prefix host
+  local triple prefix host api
   triple="$(abi_triple "$abi")"
   host="$(abi_host "$abi")"
   prefix="$WORK/prefix/$abi"
+  api="$API"
+
+  # 32 位 ABI 上 fseeko/ftello 从 API 24 才有，而 libc++ 的 <fstream> 直接用了
+  # 它们，API 23 编不过。这里为 32 位单独抬到 24。
+  # 注意：这样编出的 32 位 so 在 API 23 设备上加载不了。工程当前只打包
+  # arm64-v8a（见 app/build.gradle 的 abiFilters），所以实际不受影响。
+  case "$abi" in
+    armeabi-v7a|x86)
+      if [ "$api" -lt 24 ]; then
+        echo "==> [$abi] 32 位需要 API >= 24（fseeko/ftello），本 ABI 用 API 24 编译"
+        api=24
+      fi
+      ;;
+  esac
+
   mkdir -p "$prefix"
 
   export PATH="$TOOLCHAIN/bin:$PATH"
-  export CC="$TOOLCHAIN/bin/${triple}${API}-clang"
-  export CXX="$TOOLCHAIN/bin/${triple}${API}-clang++"
+  export CC="$TOOLCHAIN/bin/${triple}${api}-clang"
+  export CXX="$TOOLCHAIN/bin/${triple}${api}-clang++"
   export AR="$TOOLCHAIN/bin/llvm-ar"
   export RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
   export STRIP="$TOOLCHAIN/bin/llvm-strip"
@@ -92,7 +107,7 @@ build_abi() {
       cd "$WORK/build-openssl-$abi"
       # 静态库最终要链进 libaria2jni.so，所有目标文件都必须是位置无关代码
       ANDROID_NDK_ROOT="$ANDROID_NDK" ./Configure "$(openssl_target "$abi")" \
-        -D__ANDROID_API__="$API" -fPIC no-shared no-tests no-ui-console \
+        -D__ANDROID_API__="$api" -fPIC no-shared no-tests no-ui-console \
         --prefix="$prefix" --openssldir="$prefix/ssl"
       make -j"$(nproc)" build_libs
       make install_dev
