@@ -313,11 +313,11 @@ function 弹出通知(标题, 内容, 事件, 事件1)
     --调用方法
     确认.onClick = function() --点击事件
         hhh.dismiss() --关闭
-        assert(loadstring(事件))()
+        assert(load(事件))()
     end;
     取消.onClick = function() --点击事件
         hhh.dismiss() --关闭
-        assert(loadstring(事件1))()
+        assert(load(事件1))()
     end;
     确认.foreground = 波纹特效v2(0xFFCECECE)
     取消.foreground = 波纹特效v2(0xFFCECECE)

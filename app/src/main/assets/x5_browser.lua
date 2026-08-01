@@ -60,15 +60,23 @@ function onKeyDown(keyCode, event)
     return false
 end
 
-import("android.os.Build")-- Set a WebViewClient to listen for page title changes
-UiManagergetFragmentgetWebView.setWebViewClient(object : WebViewClient() {
-    override fun onReceivedTitle(view: WebView?, title: String?) {
-        super.onReceivedTitle(view, title)
-        // Set the activity title to the page title
-        activity.title = title
-    }
-})
---Note: This code is written in Kotlin, not Lua.
+import("android.os.Build")
+
+-- 下面这段原本是直接粘进来的 Kotlin 代码（文件里自己也标注了
+-- "This code is written in Kotlin, not Lua."），Lua 无法解析，
+-- 导致整个 x5_browser.lua 都编译不过。这里注释掉以恢复本文件可用。
+-- 另外它本身也是错的：onReceivedTitle 属于 WebChromeClient 而非
+-- WebViewClient，而 WebViewClient 在下面第 112 行已经正式设置过一次。
+-- 如果确实需要"页面标题变化时同步到标题栏"，应改用：
+--   web.setWebChromeClient(WebChromeClient{
+--     onReceivedTitle = function(view, title) activity.setTitle(title) end })
+--
+-- UiManagergetFragmentgetWebView.setWebViewClient(object : WebViewClient() {
+--     override fun onReceivedTitle(view: WebView?, title: String?) {
+--         super.onReceivedTitle(view, title)
+--         activity.title = title
+--     }
+-- })
 UiManagergetFragmentgetWebView.setNetworkAvailable(true)
 UiManagergetFragmentgetWebView.getSettings().setDisplayZoomControls(false)
 UiManagergetFragmentgetWebView.getSettings().setSupportZoom(true)
