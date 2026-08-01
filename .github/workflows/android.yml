@@ -35,6 +35,21 @@ jobs:
       - name: 使用Gradle构建
         run: ./gradlew assembleDebug assembleRelease --console=plain
 
+      # aria2 下载核心和 Lua 解释器都是 native 库，没打进 APK 的话
+      # 装上去才会发现，所以在这里直接查 APK 里到底有没有
+      - name: 校验 native 库已打进 APK
+        run: |
+          set -euo pipefail
+          APK="$(ls app/build/outputs/apk/release/*.apk | head -1)"
+          echo "检查 $APK"
+          LIBS="$(unzip -Z1 "$APK" 'lib/*' || true)"
+          echo "$LIBS" | sed 's/^/  /'
+          for want in lib/arm64-v8a/libaria2jni.so lib/arm64-v8a/libluajava.so; do
+            echo "$LIBS" | grep -qx "$want" \
+              || { echo "::error::APK 里缺少 $want"; exit 1; }
+            echo "✅ $want"
+          done
+
       # 仓库配置了签名 secret 时才签名，否则仅做构建校验
       - name: 检查签名配置
         id: check_key
