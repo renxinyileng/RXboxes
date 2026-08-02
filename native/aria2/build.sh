@@ -147,8 +147,11 @@ build_autotools_dep() {
   rm -rf "$b"; mkdir -p "$b"
   (
     cd "$b"
+    # 这些静态库最终要链进 libaria2jni.so，必须是位置无关代码。
+    # --disable-shared 会让 libtool 只编 .o 的非 PIC 版本，所以要显式给 -fPIC。
+    CFLAGS="-fPIC -O2" CXXFLAGS="-fPIC -O2" \
     "$WORK/$dir/configure" --host="$host" --prefix="$prefix" \
-      --disable-shared --enable-static "$@"
+      --disable-shared --enable-static --with-pic "$@"
     make -j"$(nproc)"
     make install
   )
