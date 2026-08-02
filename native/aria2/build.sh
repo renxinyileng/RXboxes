@@ -134,15 +134,21 @@ openssl_target() {
 }
 
 # 通用 autotools 依赖构建：$1=源码目录名 $2=产出的静态库名 其余=configure 参数
+#
+# 一律源外构建，不复制源码树。复制（cp -r）会丢时间戳，automake 会认为
+# configure.ac 比 aclocal.m4 新，从而触发 maintainer-mode 去调 aclocal-<版本>
+# 重新生成 —— runner 上没有那个精确版本的 aclocal，直接就挂了。
+# 源外构建用的是 tar 解出来的原始时间戳，不会误触发。
 build_autotools_dep() {
   local dir="$1" lib="$2"; shift 2
   [ -f "$prefix/lib/$lib" ] && return 0
   echo "==> [$abi] 编译 $dir"
-  rm -rf "$WORK/build-$dir-$abi"
-  cp -r "$WORK/$dir" "$WORK/build-$dir-$abi"
+  local b="$WORK/build-$dir-$abi"
+  rm -rf "$b"; mkdir -p "$b"
   (
-    cd "$WORK/build-$dir-$abi"
-    ./configure --host="$host" --prefix="$prefix" --disable-shared --enable-static "$@"
+    cd "$b"
+    "$WORK/$dir/configure" --host="$host" --prefix="$prefix" \
+      --disable-shared --enable-static "$@"
     make -j"$(nproc)"
     make install
   )
@@ -153,7 +159,7 @@ build_deps() {
   if [ ! -f "$prefix/lib/libssl.a" ]; then
     echo "==> [$abi] 编译 OpenSSL $OPENSSL_VERSION"
     rm -rf "$WORK/build-openssl-$abi"
-    cp -r "$WORK/openssl-$OPENSSL_VERSION" "$WORK/build-openssl-$abi"
+    cp -a "$WORK/openssl-$OPENSSL_VERSION" "$WORK/build-openssl-$abi"
     (
       cd "$WORK/build-openssl-$abi"
       # 静态库最终要链进 libaria2jni.so，所有目标文件都必须是位置无关代码
@@ -174,7 +180,7 @@ build_deps() {
   if [ ! -f "$prefix/lib/libz.a" ]; then
     echo "==> [$abi] 编译 zlib $ZLIB_VERSION"
     rm -rf "$WORK/build-zlib-$abi"
-    cp -r "$WORK/zlib-$ZLIB_VERSION" "$WORK/build-zlib-$abi"
+    cp -a "$WORK/zlib-$ZLIB_VERSION" "$WORK/build-zlib-$abi"
     (
       cd "$WORK/build-zlib-$abi"
       # zlib 的 configure 不认 --host，靠环境变量指定交叉编译器
