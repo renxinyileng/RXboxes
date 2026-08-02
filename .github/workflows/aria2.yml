@@ -1,9 +1,13 @@
 name: 编译 aria2 下载核心
 
 # 交叉编译 libaria2 + JNI 封装，产出 libaria2jni.so。
-# 编译很重（OpenSSL + aria2），所以不挂在 APK 构建流程上，
-# 按需手动触发或在相关源码改动时触发，产物以 artifact 形式取回，
-# 再放进 app/src/main/jniLibs/<abi>/。
+#
+# 两个引擎并行构建、各自校验：
+#   upstream  aria2 1.37.0（当前发布用的）
+#   next      aria2-next v2.5.5（活跃维护的分支）
+#
+# 构建与发布是分开的：push 只构建+校验+传 artifact，不动仓库里的 so。
+# 要更新 app/src/main/jniLibs/ 得手动触发并显式选择 publish 的引擎。
 on:
   push:
     branches: [ "main", "claude/**" ]
@@ -15,82 +19,106 @@ on:
       abis:
         description: "要编译的 ABI（空格分隔）"
         default: "arm64-v8a"
+      publish:
+        description: "把哪个引擎的 so 提交回 jniLibs"
+        default: "none"
+        type: choice
+        options: [ "none", "upstream", "next" ]
 
 concurrency:
   group: aria2-${{ github.ref }}
   cancel-in-progress: true
 
-# 编好的 so 要提交回分支
 permissions:
   contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
+    strategy:
+      # next 编不过时不能连带取消 upstream —— upstream 是保底路径
+      fail-fast: false
+      matrix:
+        engine: [ upstream, next ]
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 autotools
-        # aria2 用了 AM_GNU_GETTEXT，autoreconf 需要 gettext 提供的 autopoint
-        run: sudo apt-get update && sudo apt-get install -y autoconf automake libtool pkg-config gettext autopoint
+      - name: 安装构建工具
+        # upstream 走 autotools（aria2 用了 AM_GNU_GETTEXT，autoreconf 需要 autopoint）
+        # next 走 CMake + Ninja；两套一起装，省掉条件判断
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake libtool pkg-config gettext autopoint cmake ninja-build
+
+      - name: 检查 CMake 版本
+        if: matrix.engine == 'next'
+        run: |
+          need=3.25.0
+          have="$(cmake --version | head -1 | awk '{print $3}')"
+          echo "cmake $have（aria2-next 要求 >= $need）"
+          [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)" = "$need" ] \
+            || { echo "::error::cmake $have 低于 $need"; exit 1; }
 
       - name: 选择 NDK
         id: ndk
         run: |
           NDK="$ANDROID_HOME/ndk/27.3.13750724"
           [ -d "$NDK" ] || NDK="$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)"
-          echo "使用 $NDK"
+          echo "使用 $NDK  ($(grep Pkg.Revision "$NDK/source.properties" || true))"
           echo "path=$NDK" >> "$GITHUB_OUTPUT"
 
       - name: 交叉编译
         env:
           ANDROID_NDK: ${{ steps.ndk.outputs.path }}
+          ARIA2_ENGINE: ${{ matrix.engine }}
         run: |
           set -o pipefail
-          chmod +x native/aria2/build.sh
-          # 只编 arm64-v8a：app/build.gradle 的 abiFilters 也只打包这一个
+          chmod +x native/aria2/build.sh native/aria2/verify.sh
           ABIS="${{ github.event.inputs.abis }}"
           [ -z "$ABIS" ] && ABIS="arm64-v8a"
-          ./native/aria2/build.sh $ABIS 2>&1 | tee /tmp/aria2-build.log
+          ./native/aria2/build.sh $ABIS 2>&1 | tee "/tmp/build-${{ matrix.engine }}.log"
 
       - name: 错误摘要
-        if: always()
+        if: failure()
         run: |
           echo "===== error 行 ====="
-          grep -nE "(error|Error|fatal error|No such file):" /tmp/aria2-build.log | tail -40 || echo "（无）"
+          grep -nE "(error|Error|fatal error|No such file):" "/tmp/build-${{ matrix.engine }}.log" | tail -40 || echo "（无）"
 
       - name: 校验产物
         run: |
           set -euo pipefail
-          for d in native/aria2/out/*; do
-            abi="$(basename "$d")"
-            so="$d/libaria2jni.so"
-            [ -f "$so" ] || { echo "::error::$abi 未产出 libaria2jni.so"; exit 1; }
-            echo "### $abi  $(stat -c%s "$so") 字节"
-            # JNI 入口必须齐全
-            for sym in nativeStart nativeStop nativeIsRunning; do
-              nm -D --defined-only "$so" | grep -q "Java_com_rxteam_aria2_Aria2_$sym" \
-                || { echo "::error::$abi 缺少导出 $sym"; exit 1; }
-            done
-            # 不能残留对宿主机库的未定义依赖
-            echo "-- NEEDED:"; readelf -d "$so" | grep NEEDED
+          for d in native/aria2/out/${{ matrix.engine }}/*; do
+            ./native/aria2/verify.sh "$d/libaria2jni.so" "${{ matrix.engine }}"
           done
 
       - uses: actions/upload-artifact@v4
         with:
-          name: aria2jni
-          path: native/aria2/out/**/libaria2jni.so
+          name: aria2jni-${{ matrix.engine }}
+          path: native/aria2/out/${{ matrix.engine }}/**/libaria2jni.so
 
-      # 产物直接落进 jniLibs 并提交回本分支，APK 构建才拿得到。
-      # jniLibs 不在本工作流的 paths 里，这次提交不会再触发自己。
+  # 只有手动触发并显式指定引擎时才更新仓库里的 so。
+  # 这样"编出来并验证通过"和"发布给用户"是两件事，回滚只需 revert 一个提交。
+  publish:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish != 'none'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: aria2jni-${{ github.event.inputs.publish }}
+          path: incoming
+
       - name: 提交 so 到 app/src/main/jniLibs
         run: |
           set -euo pipefail
-          for d in native/aria2/out/*; do
-            abi="$(basename "$d")"
+          find incoming -name libaria2jni.so | while read -r so; do
+            abi="$(basename "$(dirname "$so")")"
             mkdir -p "app/src/main/jniLibs/$abi"
-            cp "$d/libaria2jni.so" "app/src/main/jniLibs/$abi/libaria2jni.so"
+            cp "$so" "app/src/main/jniLibs/$abi/libaria2jni.so"
+            echo "更新 $abi ($(stat -c%s "$so") 字节)"
           done
           git add app/src/main/jniLibs
           if git diff --cached --quiet; then
@@ -98,6 +126,6 @@ jobs:
             exit 0
           fi
           git -c user.name="Claude" -c user.email="noreply@anthropic.com" \
-            commit -m "build(aria2): 更新 libaria2jni.so（由 aria2 工作流编译）" \
+            commit -m "build(aria2): 更新 libaria2jni.so（引擎 ${{ github.event.inputs.publish }}）" \
                    -m "来自 ${{ github.sha }} 的构建产物。"
           git push origin "HEAD:${{ github.ref_name }}"
