@@ -50,6 +50,21 @@ jobs:
             echo "✅ $want"
           done
 
+          # Android 15 起设备可能用 16KB 内存页，未按 16KB 对齐的 so 会加载失败。
+          # 少一个都可能让整个 App 起不来，所以逐个查 LOAD 段的对齐。
+          echo "-- 16KB 页对齐"
+          rm -rf /tmp/apklibs && mkdir -p /tmp/apklibs
+          unzip -q -o "$APK" 'lib/*' -d /tmp/apklibs
+          bad=0
+          while read -r so; do
+            aligns="$(readelf -lW "$so" | awk '/LOAD/{print $NF}' | sort -u)"
+            if echo "$aligns" | grep -qv '0x4000'; then
+              echo "::error::$(basename "$so") 对齐为 $(echo $aligns) —— 需要 0x4000(16KB)"
+              bad=1
+            fi
+          done < <(find /tmp/apklibs -name '*.so')
+          [ $bad -eq 0 ] && echo "✅ 全部 $(find /tmp/apklibs -name '*.so' | wc -l) 个 so 均为 16KB 对齐" || exit 1
+
       # 仓库配置了签名 secret 时才签名，否则仅做构建校验
       - name: 检查签名配置
         id: check_key
@@ -85,7 +100,15 @@ jobs:
           ALIGNED="$RUNNER_TEMP/aligned.apk"
           SIGNED="$RUNNER_TEMP/app-release-signed.apk"
 
-          "$TOOLS/zipalign" -p -f 4 "$UNSIGNED" "$ALIGNED"
+          # -P 16：so 在 APK 内按 16KB 页边界对齐。extractNativeLibs 默认为
+          # false，系统直接从 APK 里 mmap so，所以除了 ELF 自身要 16KB 对齐，
+          # zip 条目也得对齐。-P 需要 build-tools 35+，低版本回退到 -p。
+          if "$TOOLS/zipalign" --help 2>&1 | grep -q '\-P '; then
+            "$TOOLS/zipalign" -P 16 -f 4 "$UNSIGNED" "$ALIGNED"
+          else
+            echo "::warning::build-tools $BUILD_TOOLS 不支持 -P，回退到 -p（4KB）"
+            "$TOOLS/zipalign" -p -f 4 "$UNSIGNED" "$ALIGNED"
+          fi
           "$TOOLS/apksigner" sign \
             --ks "$RUNNER_TEMP/keystore.jks" \
             --ks-pass "pass:$KEYSTORE_PASSWORD" \

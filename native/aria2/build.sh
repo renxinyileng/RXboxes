@@ -372,6 +372,7 @@ build_abi() {
     "${zlib_link[@]}" \
     -llog -lm -ldl -static-libstdc++ \
     -Wl,--no-undefined \
+    -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 \
     -o "$OUT/$abi/libaria2jni.so"
   "$STRIP" --strip-unneeded "$OUT/$abi/libaria2jni.so"
   ls -la "$OUT/$abi/libaria2jni.so"
