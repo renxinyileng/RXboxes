@@ -10,6 +10,9 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
+# 基线刻意保持为上游 1.37.0 的 41 个方法，作为"只增不减"的下限。
+# 不要用 next 的产物去刷新它 —— 那样就等于把回归当成新基准，
+# 以后 aria2-next 真掉了方法也发现不了。
 BASELINE="$HERE/baseline/rpc-methods-upstream.txt"
 CONF="$REPO/app/src/main/assets/www/aria2/aria2.conf"
 

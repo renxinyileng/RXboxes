@@ -3,8 +3,8 @@ name: 编译 aria2 下载核心
 # 交叉编译 libaria2 + JNI 封装，产出 libaria2jni.so。
 #
 # 两个引擎并行构建、各自校验：
-#   upstream  aria2 1.37.0（当前发布用的）
-#   next      aria2-next v2.5.5（活跃维护的分支）
+#   next      aria2-next v2.5.5（默认，当前发布用的就是它）
+#   upstream  aria2 1.37.0（上游已停更，保留作为保底路径）
 #
 # 构建与发布是分开的：push 只构建+校验+传 artifact，不动仓库里的 so。
 # 要更新 app/src/main/jniLibs/ 得手动触发并显式选择 publish 的引擎。

@@ -6,9 +6,11 @@
 # 默认编译 arm64-v8a。产物落在 out/<引擎>/<abi>/libaria2jni.so。
 #
 # 支持两个引擎，可并存、可随时切回：
-#   upstream  aria2 1.37.0（autotools）—— 上游已停更，当前发布用的就是它
-#   next      aria2-next v2.5.5（CMake）—— 活跃维护的分支，保留了 libaria2
-#             与 JSON-RPC 接口，所以 aria2jni.cpp 和 AriaNg 都不用改
+#   next      aria2-next v2.5.5（CMake）—— 默认，当前发布用的就是它。
+#             活跃维护的分支，保留了 libaria2 与 JSON-RPC 接口，所以
+#             aria2jni.cpp 和 AriaNg 都不用改
+#   upstream  aria2 1.37.0（autotools）—— 上游已停更（2023-01 最后一版），
+#             保留作为保底路径：next 万一出问题，改一个环境变量就能编回去
 #
 # 依赖取舍差异：
 #   upstream  只要 OpenSSL，zlib 用 NDK sysroot 自带的（-lz）
@@ -21,7 +23,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 API="${API:-23}"                       # 与工程 minSdk 保持一致
 
-ARIA2_ENGINE="${ARIA2_ENGINE:-upstream}"
+ARIA2_ENGINE="${ARIA2_ENGINE:-next}"
 case "$ARIA2_ENGINE" in
   upstream)
     ARIA2_REPO="https://github.com/aria2/aria2"
