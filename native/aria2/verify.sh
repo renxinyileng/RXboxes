@@ -105,8 +105,20 @@ else
 fi
 
 # ---- 7. 引擎身份与体积 ----
+# 上游的 User-Agent 是 "aria2/<版本>"，aria2-next 改成了 "aria2-next/<版本>"
+# （见其 OptionHandlerFactory.cc）。这里必须真断言，否则两个引擎的产物
+# 混起来根本分不出，publish 错引擎也不会被发现。
 echo "-- 引擎与体积"
-note "版本串: $(strings -a "$SO" | grep -oE 'aria2/[0-9]+\.[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ')"
+ident="$(strings -a "$SO" | grep -oE '(aria2-next|aria2)/[0-9]+\.[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ')"
+note "版本串: ${ident:-（未找到）}"
+case "$ENGINE" in
+  upstream)
+    grep -q "aria2/1\." <<<"$ident" || bad "引擎身份不符：期望 aria2/1.x，实际 '$ident'" ;;
+  next)
+    grep -q "aria2-next/" <<<"$ident" || bad "引擎身份不符：期望 aria2-next/x.y.z，实际 '$ident'" ;;
+  *)
+    note "（引擎未指定，跳过身份断言）" ;;
+esac
 size=$(stat -c%s "$SO")
 note "体积: $size 字节"
 # 基线 10,656,864。突然瘦一大截通常意味着某个功能被静默关掉了

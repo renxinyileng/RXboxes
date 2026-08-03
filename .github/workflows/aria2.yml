@@ -97,10 +97,31 @@ jobs:
           name: aria2jni-${{ matrix.engine }}
           path: native/aria2/out/${{ matrix.engine }}/**/libaria2jni.so
 
+  # 宿主机上把引擎真跑起来，对着真实的 aria2.conf 走一遍 AriaNg 的全部
+  # JSON-RPC 调用。交叉编译产物在 CI 里跑不了，静态检查也证明不了
+  # "conf-path 经 sessionNew 真的生效"，只能靠这个。
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config \
+            libssl-dev zlib1g-dev libexpat1-dev jq
+      - name: 宿主机 RPC 探针
+        env:
+          ARIA2_ENGINE: next
+        run: |
+          chmod +x native/aria2/host-probe.sh
+          ./native/aria2/host-probe.sh
+
   # 只有手动触发并显式指定引擎时才更新仓库里的 so。
   # 这样"编出来并验证通过"和"发布给用户"是两件事，回滚只需 revert 一个提交。
   publish:
-    needs: build
+    # 探针也必须绿：光编出来不够，得证明它真能服务 AriaNg
+    needs: [ build, probe ]
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish != 'none'
     runs-on: ubuntu-latest
     steps:
