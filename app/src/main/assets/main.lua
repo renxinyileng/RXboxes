@@ -663,7 +663,7 @@ setting.setUseWideViewPort(true)
 setting.setLoadWithOverviewMode(true)
 setting.setBuiltInZoomControls(false)
 if network==true then
-web.loadUrl("https://rxteam.xyz")
+web.loadUrl("https://rxblog.xyz")
 elseif network==false then
 web.loadUrl("file:///android_asset/404.html")
 end
