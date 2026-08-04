@@ -11,7 +11,6 @@
  */
 #include <jni.h>
 #include <pthread.h>
-#include <android/log.h>
 
 #include <atomic>
 #include <string>
@@ -19,9 +18,20 @@
 
 #include <aria2/aria2.h>
 
-#define LOG_TAG "aria2jni"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+// 非 Android 下退化成 stderr，这样同一份引擎驱动逻辑能编成宿主机程序，
+// 在 CI 里对着真实的 aria2.conf 跑一遍 JSON-RPC（见文件末尾的 main）。
+// 我们实际发布的是 sessionNew 这条库入口，跟 aria2c 可执行文件那条不是
+// 同一条路径，所以必须按这条来验证。
+#ifdef __ANDROID__
+#  include <android/log.h>
+#  define LOG_TAG "aria2jni"
+#  define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#  define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#else
+#  include <cstdio>
+#  define LOGI(...) do { fprintf(stderr, "[I] " __VA_ARGS__); fputc('\n', stderr); } while (0)
+#  define LOGE(...) do { fprintf(stderr, "[E] " __VA_ARGS__); fputc('\n', stderr); } while (0)
+#endif
 
 namespace {
 
@@ -101,6 +111,54 @@ void* aria2Worker(void*)
     return nullptr;
 }
 
+// 真正的启动逻辑。JNI 入口和宿主机探针都走这里，保证被验证的就是被发布的。
+bool startEngine(aria2::KeyVals options)
+{
+    if (gRunning.load()) {
+        LOGI("aria2 已在运行，忽略本次启动请求");
+        return true;
+    }
+
+    gOptions = std::move(options);
+    gStopRequested.store(false);
+    gRunning.store(true);
+    gStartState = kPending;
+
+    if (pthread_create(&gThread, nullptr, aria2Worker, nullptr) != 0) {
+        LOGE("创建 aria2 工作线程失败");
+        gRunning.store(false);
+        return false;
+    }
+    gJoinable = true;
+
+    // 等工作线程把 session 建起来（或失败），再把真实结果返回给调用方。
+    // 建会话包括绑定 RPC 端口，很快，不至于卡住调用方太久。
+    pthread_mutex_lock(&gStartMutex);
+    while (gStartState == kPending) {
+        pthread_cond_wait(&gStartCond, &gStartMutex);
+    }
+    const StartState state = gStartState;
+    pthread_mutex_unlock(&gStartMutex);
+
+    if (state != kStarted) {
+        pthread_join(gThread, nullptr);
+        gJoinable = false;
+        return false;
+    }
+    return true;
+}
+
+void stopEngine()
+{
+    if (!gJoinable) {
+        return;
+    }
+    // 事件循环自己退出的情况下 gRunning 已经是 false，线程仍然需要 join
+    gStopRequested.store(true);
+    pthread_join(gThread, nullptr);
+    gJoinable = false;
+}
+
 std::string jstringToStd(JNIEnv* env, jstring s)
 {
     if (s == nullptr) {
@@ -122,10 +180,6 @@ JNIEXPORT jboolean JNICALL
 Java_com_rxteam_aria2_Aria2_nativeStart(JNIEnv* env, jclass, jobjectArray keys,
                                         jobjectArray values)
 {
-    if (gRunning.load()) {
-        LOGI("aria2 已在运行，忽略本次启动请求");
-        return JNI_TRUE;
-    }
     if (keys == nullptr || values == nullptr) {
         LOGE("选项数组为空");
         return JNI_FALSE;
@@ -137,57 +191,27 @@ Java_com_rxteam_aria2_Aria2_nativeStart(JNIEnv* env, jclass, jobjectArray keys,
         return JNI_FALSE;
     }
 
-    gOptions.clear();
-    gOptions.reserve(static_cast<size_t>(n));
+    aria2::KeyVals options;
+    options.reserve(static_cast<size_t>(n));
     for (jsize i = 0; i < n; ++i) {
         jstring k = static_cast<jstring>(env->GetObjectArrayElement(keys, i));
         jstring v = static_cast<jstring>(env->GetObjectArrayElement(values, i));
         std::string key = jstringToStd(env, k);
         std::string value = jstringToStd(env, v);
         if (!key.empty()) {
-            gOptions.emplace_back(key, value);
+            options.emplace_back(key, value);
         }
         env->DeleteLocalRef(k);
         env->DeleteLocalRef(v);
     }
 
-    gStopRequested.store(false);
-    gRunning.store(true);
-    gStartState = kPending;
-    if (pthread_create(&gThread, nullptr, aria2Worker, nullptr) != 0) {
-        LOGE("创建 aria2 工作线程失败");
-        gRunning.store(false);
-        return JNI_FALSE;
-    }
-    gJoinable = true;
-
-    // 等工作线程把 session 建起来（或失败），再把真实结果返回给 Java。
-    // 建会话包括绑定 RPC 端口，很快，不至于卡住调用方太久。
-    pthread_mutex_lock(&gStartMutex);
-    while (gStartState == kPending) {
-        pthread_cond_wait(&gStartCond, &gStartMutex);
-    }
-    const StartState state = gStartState;
-    pthread_mutex_unlock(&gStartMutex);
-
-    if (state != kStarted) {
-        pthread_join(gThread, nullptr);
-        gJoinable = false;
-        return JNI_FALSE;
-    }
-    return JNI_TRUE;
+    return startEngine(std::move(options)) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
 Java_com_rxteam_aria2_Aria2_nativeStop(JNIEnv*, jclass)
 {
-    if (!gJoinable) {
-        return;
-    }
-    // 事件循环自己退出的情况下 gRunning 已经是 false，线程仍然需要 join
-    gStopRequested.store(true);
-    pthread_join(gThread, nullptr);
-    gJoinable = false;
+    stopEngine();
 }
 
 JNIEXPORT jboolean JNICALL
@@ -197,3 +221,64 @@ Java_com_rxteam_aria2_Aria2_nativeIsRunning(JNIEnv*, jclass)
 }
 
 } // extern "C"
+
+// ---------------------------------------------------------------------------
+// 宿主机 RPC 探针（只在非 Android 下编译）
+//
+// 存在的理由：CI 里能跑的 aria2c 可执行文件走的是 main() -> MultiUrlRequestInfo
+// 那条路，而我们实际发布的是 sessionNew() 这条库入口。两条路共用 RPC 建立
+// 逻辑，但"选项怎么进去"是不同的——尤其 conf-path 经 sessionNew 传递这件事
+// 从来没被验证过。如果它静默失效，配置全部被忽略、enable-rpc 回到默认 false，
+// 表现就是 App 看着正常启动但 AriaNg 连不上。
+//
+// 这里复用上面同一个 startEngine()，所以被验证的就是被发布的那份逻辑。
+//
+// 用法：aria2-probe <aria2.conf 路径> <rpc 端口> <下载目录>
+//       起来后阻塞，收到 SIGINT/SIGTERM 退出。
+#ifndef __ANDROID__
+#include <csignal>
+#include <unistd.h>
+
+namespace {
+volatile sig_atomic_t gProbeStop = 0;
+void onSignal(int) { gProbeStop = 1; }
+} // namespace
+
+int main(int argc, char** argv)
+{
+    if (argc < 4) {
+        fprintf(stderr, "用法: %s <aria2.conf> <rpc 端口> <下载目录>\n", argv[0]);
+        return 2;
+    }
+    const std::string conf = argv[1];
+    const std::string port = argv[2];
+    const std::string dir = argv[3];
+
+    signal(SIGINT, onSignal);
+    signal(SIGTERM, onSignal);
+
+    // 与 Aria2.startWithConf() + main.lua 的覆盖项保持一致
+    aria2::KeyVals options{
+        {"conf-path", conf},
+        {"dir", dir},
+        {"input-file", dir + "/aria2.session"},
+        {"save-session", dir + "/aria2.session"},
+        {"rpc-listen-port", port},
+        {"enable-rpc", "true"},
+    };
+
+    if (!startEngine(std::move(options))) {
+        fprintf(stderr, "启动失败\n");
+        return 1;
+    }
+    printf("READY %s\n", port.c_str());
+    fflush(stdout);
+
+    while (!gProbeStop && gRunning.load()) {
+        usleep(100 * 1000);
+    }
+    stopEngine();
+    printf("STOPPED\n");
+    return 0;
+}
+#endif // !__ANDROID__
