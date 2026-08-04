@@ -5,7 +5,7 @@ import android.preference.Preference;
 import android.preference.PreferenceFragment;
 import android.preference.PreferenceScreen;
 
-import com.luajava.LuaError;
+import com.luajava.LuaException;
 import com.luajava.LuaJavaAPI;
 import com.luajava.LuaObject;
 import com.luajava.LuaState;
@@ -57,7 +57,7 @@ public class LuaPreferenceFragment extends PreferenceFragment implements Prefere
                     if(key instanceof String){
                         try {
                             LuaJavaAPI.javaSetter(L,pf,(String) key,et.getValue());
-                        } catch (LuaError e) {
+                        } catch (LuaException e) {
                             e.printStackTrace();
                         }
                     }

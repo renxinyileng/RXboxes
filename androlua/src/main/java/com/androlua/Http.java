@@ -1,7 +1,7 @@
 package com.androlua;
 
 import com.androlua.util.AsyncTaskX;
-import com.luajava.LuaError;
+import com.luajava.LuaException;
 import com.luajava.LuaObject;
 import com.luajava.LuaString;
 
@@ -503,10 +503,10 @@ public class Http {
                 return;
             try {
                 mCallback.call((Object[]) result);
-            } catch (LuaError e) {
+            } catch (LuaException e) {
                 try {
                     mCallback.getLuaState().getLuaObject("print").call(e.getMessage());
-                } catch (LuaError e2) {
+                } catch (LuaException e2) {
                 }
                 android.util.Log.i("lua", e.getMessage());
             }

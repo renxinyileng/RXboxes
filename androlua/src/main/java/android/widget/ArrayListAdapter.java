@@ -23,7 +23,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 
-import com.luajava.LuaError;
+import com.luajava.LuaException;
 import com.luajava.LuaFunction;
 
 import java.util.ArrayList;
@@ -510,7 +510,7 @@ public class ArrayListAdapter<T> extends BaseAdapter implements Filterable {
                 final ArrayList<T> newValues = new ArrayList<T>();
                 try {
                     mLuaFilter.call(new ArrayList<>(mOriginalValues), newValues, prefix);
-                } catch (LuaError e) {
+                } catch (LuaException e) {
                     e.printStackTrace();
                 }
                 results.values = newValues;
