@@ -103,7 +103,12 @@ lay = {
             },
             {
                 CircleImageView,
-                src = "https://www.helloimg.com/images/2022/08/21/ZQYnVo.png",
+                -- 原来是 helloimg 上的一张远程图，图床已经挂了（真机日志里是
+                -- getHttpBitmap -> FileNotFoundException），搜索按钮一直是空白。
+                -- 换成随包走的本地图标，顺便省掉一次开屏网络请求。
+                -- 相对路径由 loadbitmap 按 luadir 解析，luadir 是含 main.lua 的
+                -- 那一层（即 files/），所以这里写 icon/ 而不是 ../icon/
+                src = "icon/search.png",
                 padding = "10dp",
                 id = "start",
             },
