@@ -50,8 +50,6 @@ import dalvik.system.DexFile;
 
 import static java.io.File.separator;
 
-import com.luajava.JavaFunction;
-import com.luajava.LuaError;
 import com.luajava.LuaObject;
 import com.luajava.LuaState;
 import com.luajava.LuaTable;

@@ -1,7 +1,6 @@
 package com.androlua.util;
 
 import com.androlua.LuaUtil;
-import com.luajava.LuaError;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;

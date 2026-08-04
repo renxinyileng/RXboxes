@@ -41,7 +41,7 @@ import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
-import com.luajava.LuaError;
+import com.luajava.LuaException;
 import com.luajava.LuaFunction;
 
 import java.io.File;
@@ -95,7 +95,7 @@ public class LuaWebView extends WebView implements LuaGcable {
                                          Boolean ret = mAdsFilter.call(url);
                                          if (ret!=null&&ret)
                                              return true;
-                                     } catch (LuaError e) {
+                                     } catch (LuaException e) {
                                          e.printStackTrace();
                                      }
                                  }
@@ -117,7 +117,7 @@ public class LuaWebView extends WebView implements LuaGcable {
                 if (mfinished != null) {
                     try {
                         mfinished.call(url);
-                    } catch (LuaError e) {
+                    } catch (LuaException e) {
                         e.printStackTrace();
                     }
                 }
@@ -131,7 +131,7 @@ public class LuaWebView extends WebView implements LuaGcable {
                                          Boolean ret = mAdsFilter.call(url);
                                          if (ret!=null&&ret)
                                              return new WebResourceResponse(null, null, null);
-                                     } catch (LuaError e) {
+                                     } catch (LuaException e) {
                                          e.printStackTrace();
                                      }
                                  }
@@ -667,7 +667,7 @@ public class LuaWebView extends WebView implements LuaGcable {
                 try {
                     if (mAdsFilter.call(url))
                         return new WebResourceResponse(null, null, null);
-                } catch (LuaError e) {
+                } catch (LuaException e) {
                     e.printStackTrace();
                 }
             }
