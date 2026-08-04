@@ -114,10 +114,17 @@ jobs:
           ALIGNED="$RUNNER_TEMP/aligned.apk"
           SIGNED="$RUNNER_TEMP/app-release-signed.apk"
 
-          # -P 16：so 在 APK 内按 16KB 页边界对齐。extractNativeLibs 默认为
-          # false，系统直接从 APK 里 mmap so，所以除了 ELF 自身要 16KB 对齐，
-          # zip 条目也得对齐。-P 需要 build-tools 35+，低版本回退到 -p。
-          if "$TOOLS/zipalign" --help 2>&1 | grep -q '\-P '; then
+          # -P 16：so 在 APK 内按 16KB 页边界对齐，供系统直接从 APK mmap 时使用。
+          # 本工程 extractNativeLibs=true（Lua 的 require 需要 so 真实落盘），
+          # 此时 so 在 APK 里是压缩存储的、由系统解压到 nativeLibraryDir，
+          # zip 条目对齐其实用不上；但保留 -P 以免将来改回 false 时忘记。
+          # -P 需要 build-tools 35+，低版本回退到 -p。
+          #
+          # 注意别写成 zipalign --help | grep -q：grep -q 命中即退出会让
+          # zipalign 收到 SIGPIPE，在 set -o pipefail 下整条管道返回非零，
+          # 于是明明支持 -P 也会被误判成不支持。先把输出存下来再判断。
+          ZA_HELP="$("$TOOLS/zipalign" --help 2>&1 || true)"
+          if grep -q -- '-P' <<<"$ZA_HELP"; then
             "$TOOLS/zipalign" -P 16 -f 4 "$UNSIGNED" "$ALIGNED"
           else
             echo "::warning::build-tools $BUILD_TOOLS 不支持 -P，回退到 -p（4KB）"
