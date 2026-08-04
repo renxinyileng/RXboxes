@@ -43,6 +43,25 @@ android {
         }
     }
 
+    packaging {
+        jniLibs {
+            // 必须让 so 解压到 nativeLibraryDir，不能留在 APK 里。
+            //
+            // AndroLua 的 14 个 Lua C 模块（libsocket.so、libcjson.so 等）不是
+            // 用 System.loadLibrary 加载的，而是 Lua 的 require 走 package.cpath
+            // 找过去 —— 那是文件系统路径，so 必须真实落盘。
+            //
+            // AGP 在 minSdk >= 23 时默认 extractNativeLibs=false，so 留在 APK
+            // 内不落盘。此时 System.loadLibrary 照常能用（libluajava.so 就是
+            // 这么加载的），但 require 一律找不到，main.lua:11 的
+            // require("socket") 直接失败、整个脚本中断。
+            //
+            // 原工程 minSdk 是 21（AGP 因此保持 extractNativeLibs=true）所以从
+            // 没暴露；本次为了 Material 1.14 抬到 23 才触发。
+            useLegacyPackaging = true
+        }
+    }
+
     lint {
         abortOnError false
         checkReleaseBuilds false
@@ -51,13 +70,15 @@ android {
 
 dependencies {
     // 本地 jar：AndroLua 生态里没有 Maven 发布的部分
-    //   LuaCustRecyclerAdapter.jar / LuaGoMyServer.jar / zip4j.jar(org.manalua 封装) / svg-android
+    //   LuaGoMyServer.jar  —— main.lua:112 用它在 8080 端口伺服 AriaNg
+    //   zip4j.jar          —— 被 import "org.manalua.util.zip4j" 使用。
+    //                         注意这是 org.manalua 重打包版，与 Maven 上的
+    //                         net.lingala.zip4j 包名不同，不能互相替代
     implementation fileTree(dir: "libs", include: ["*.jar", "*.aar"])
     implementation project(':androlua')
 
     implementation "androidx.appcompat:appcompat:$rootProject.ext.appcompat_version"
     implementation "com.google.android.material:material:$rootProject.ext.material_version"
-    implementation "androidx.constraintlayout:constraintlayout:$rootProject.ext.constraintlayout_version"
     // hs.lua 用到，原先靠 assets 里的 android-support-v4.dex 提供，
     // 那种从可写目录加载 dex 的方式已被 Android 拒绝
     implementation "androidx.swiperefreshlayout:swiperefreshlayout:$rootProject.ext.swiperefreshlayout_version"
@@ -65,11 +86,7 @@ dependencies {
     implementation "com.aliyun.sdk.android:AliyunPlayer:$rootProject.ext.aliyun_player_version"
     implementation "com.tencent.tbs:tbssdk:$rootProject.ext.tbssdk_version"
 
-    // 原先以 libs/*.jar 形式内置，改为 Maven 依赖便于持续升级
     // okhttp 保持 3.x：Lua 脚本按 Java 风格调用 response.code()/body().string()，
     // 4.x 起这些方法被 Kotlin 属性取代，Java/Lua 侧无法调用。
     implementation "com.squareup.okhttp3:okhttp:$rootProject.ext.okhttp_version"
-    implementation "org.jsoup:jsoup:$rootProject.ext.jsoup_version"
-    implementation "net.lingala.zip4j:zip4j:$rootProject.ext.zip4j_version"
-    implementation "com.github.bumptech.glide:glide:$rootProject.ext.glide_version"
 }

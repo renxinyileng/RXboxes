@@ -50,6 +50,35 @@ jobs:
             echo "✅ $want"
           done
 
+          # AndroLua 的 Lua C 模块靠 require 走 package.cpath 找 so，那是文件
+          # 系统路径，所以 so 必须解压到 nativeLibraryDir。extractNativeLibs
+          # 一旦变成 false，System.loadLibrary 还能用但 require 全线失败，
+          # main.lua 第 11 行就中断 —— 装到机器上才看得出来，必须在这里拦。
+          echo "-- extractNativeLibs"
+          AAPT="$(ls -1 "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)"
+          if "$AAPT" dump xmltree --file AndroidManifest.xml "$APK" \
+               | grep -q 'extractNativeLibs.*=.*true'; then
+            echo "✅ extractNativeLibs=true（so 会解压到 nativeLibraryDir）"
+          else
+            echo "::error::extractNativeLibs 不是 true —— Lua 的 require 将找不到 libsocket.so 等模块"
+            exit 1
+          fi
+
+          # Android 15 起设备可能用 16KB 内存页，未按 16KB 对齐的 so 会加载失败。
+          # 少一个都可能让整个 App 起不来，所以逐个查 LOAD 段的对齐。
+          echo "-- 16KB 页对齐"
+          rm -rf /tmp/apklibs && mkdir -p /tmp/apklibs
+          unzip -q -o "$APK" 'lib/*' -d /tmp/apklibs
+          bad=0
+          while read -r so; do
+            aligns="$(readelf -lW "$so" | awk '/LOAD/{print $NF}' | sort -u)"
+            if echo "$aligns" | grep -qv '0x4000'; then
+              echo "::error::$(basename "$so") 对齐为 $(echo $aligns) —— 需要 0x4000(16KB)"
+              bad=1
+            fi
+          done < <(find /tmp/apklibs -name '*.so')
+          [ $bad -eq 0 ] && echo "✅ 全部 $(find /tmp/apklibs -name '*.so' | wc -l) 个 so 均为 16KB 对齐" || exit 1
+
       # 仓库配置了签名 secret 时才签名，否则仅做构建校验
       - name: 检查签名配置
         id: check_key
@@ -85,7 +114,22 @@ jobs:
           ALIGNED="$RUNNER_TEMP/aligned.apk"
           SIGNED="$RUNNER_TEMP/app-release-signed.apk"
 
-          "$TOOLS/zipalign" -p -f 4 "$UNSIGNED" "$ALIGNED"
+          # -P 16：so 在 APK 内按 16KB 页边界对齐，供系统直接从 APK mmap 时使用。
+          # 本工程 extractNativeLibs=true（Lua 的 require 需要 so 真实落盘），
+          # 此时 so 在 APK 里是压缩存储的、由系统解压到 nativeLibraryDir，
+          # zip 条目对齐其实用不上；但保留 -P 以免将来改回 false 时忘记。
+          # -P 需要 build-tools 35+，低版本回退到 -p。
+          #
+          # 注意别写成 zipalign --help | grep -q：grep -q 命中即退出会让
+          # zipalign 收到 SIGPIPE，在 set -o pipefail 下整条管道返回非零，
+          # 于是明明支持 -P 也会被误判成不支持。先把输出存下来再判断。
+          ZA_HELP="$("$TOOLS/zipalign" --help 2>&1 || true)"
+          if grep -q -- '-P' <<<"$ZA_HELP"; then
+            "$TOOLS/zipalign" -P 16 -f 4 "$UNSIGNED" "$ALIGNED"
+          else
+            echo "::warning::build-tools $BUILD_TOOLS 不支持 -P，回退到 -p（4KB）"
+            "$TOOLS/zipalign" -p -f 4 "$UNSIGNED" "$ALIGNED"
+          fi
           "$TOOLS/apksigner" sign \
             --ks "$RUNNER_TEMP/keystore.jks" \
             --ks-pass "pass:$KEYSTORE_PASSWORD" \
