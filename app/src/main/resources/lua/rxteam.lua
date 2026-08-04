@@ -482,7 +482,9 @@ end
 --end)
 
 function 隐藏标题栏_androidx()
-    activity.getSupportActionBar().hide()
+    pcall(function()
+        activity.getActionBar().hide()
+    end)
 end
 数据存储 = "/data/data/" .. tostring(activity.getPackageName()) .. "/"
 数据存储 = activity.getCacheDir().toString()
