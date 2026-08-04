@@ -3,117 +3,98 @@ import "android.app.*"
 import "android.os.*"
 import "android.widget.*"
 import "android.view.*"
-import "com.aliyun.player.*"
-import "com.aliyun.player.AliPlayerFactory"
-import "com.aliyun.player.IPlayer"
-import "com.aliyun.player.source.UrlSource"
+import "android.util.Log"
+import "androidx.media3.exoplayer.ExoPlayer"
+import "androidx.media3.common.MediaItem"
+import "androidx.media3.common.Player"
+import "androidx.media3.ui.PlayerView"
+import "androidx.media3.datasource.DefaultHttpDataSource"
+import "androidx.media3.exoplayer.source.DefaultMediaSourceFactory"
+
+-- 替换原阿里云播放器(AliyunPlayer 7.16.0),改用 Google 官方 Media3 ExoPlayer。
+-- 入口参数:视频地址(m3u8/mp4 的 http(s):// URL 或 file:// 本地 URI),由 main.lua 传入。
 pcall(function() activity.getActionBar().hide() end)
+
 url = ...
+if type(url) ~= "string" then
+    url = ""
+end
+
 layout = {
     LinearLayout,
     orientation = "vertical",
     layout_height = "fill",
     layout_width = "fill",
-    tool_bar,
     {
-        SurfaceView,
-        layout_height = "wrap",
-        layout_width = "wrap",
-        id = "surface_view"
+        PlayerView,
+        layout_width = "fill",
+        layout_height = "fill",
+        id = "player_view"
     }
 };
 activity.setContentView(loadlayout(layout))
--- main_title_id.setText("AliyunPlayer")
 
--- 该源码无法直接使用，需要打包后才可使用。
--- 移植到自己项目时需要把工程下 /extend/lib/ 文件夹复制到自己的项目/extend 目录下再进行打包。
+-- 播放视频时保持屏幕常亮
+activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
---[[Author:Azure
-官方文档:https://help.aliyun.com/document_detail/311525.html]]
+-- 错误码 -> 用户可读提示
+function 播放错误提示(code)
+    local tips = {
+        ["ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT"] = "视频源连接超时，请检查网络或稍后重试",
+        ["ERROR_CODE_IO_NETWORK_CONNECTION_FAILED"] = "视频源网络连接失败",
+        ["ERROR_CODE_IO_DNS_FAILED"] = "视频源域名解析失败",
+        ["ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED"] = "不支持的视频格式",
+        ["ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED"] = "不支持的视频清单格式",
+        ["ERROR_CODE_DECODER_INIT_FAILED"] = "解码器初始化失败",
+        ["ERROR_CODE_DECODING_FAILED"] = "视频解码失败",
+    }
+    return tips[code] or ("播放失败(" .. tostring(code) .. ")")
+end
 
--- 创建 AliyunPlayer
-aliPlayer = AliPlayerFactory.createAliPlayer(activity);
--- 埋点日志上报功能默认开启，当 traceId 设置为 DisableAnalytics 时，则关闭埋点日志上报。当 traceId 设置为其他参数时，则开启埋点日志上报。
--- 建议传递 traceId，便于跟踪日志。traceId 为设备或用户的唯一标识符，通常为 imei 或 idfa 。
--- aliPlayer.setTraceId("traceId"); 
+-- 创建 ExoPlayer 并绑定到 PlayerView(连接/读取超时放宽到 15s,默认 8s 对慢源太短)
+-- 注意:media3 1.3+ 已移除 Builder.setHttpDataSourceFactory,需经 DefaultMediaSourceFactory 注入数据源
+-- 用 pcall 兜底:万一自定义数据源配置失败,回退到默认构建,保证播放器可用
+dsFactory = DefaultHttpDataSource.Factory()
+dsFactory.setConnectTimeoutMs(15000)
+dsFactory.setReadTimeoutMs(15000)
+local ok, err = pcall(function()
+    player = ExoPlayer.Builder(activity).setMediaSourceFactory(DefaultMediaSourceFactory(dsFactory)).build()
+end)
+if not ok then
+    Log.w("ExoPlayer", "自定义数据源配置失败,回退默认构建: " .. tostring(err))
+    player = ExoPlayer.Builder(activity).build()
+end
+player_view.setPlayer(player)
+player_view.setShowBuffering(1) -- PlayerView.SHOW_BUFFERING_WHEN_PLAYING:缓冲时显示加载圈
 
--- 此回调会在使用播放器的过程中，出现了任何错误，都会回调此接口
-aliPlayer.setOnErrorListener(IPlayer.OnErrorListener {
-    onError = function(errorInfo)
-        errorCode = errorInfo.getCode(); -- 错误码
-        errorMsg = errorInfo.getMsg(); -- 错误描述
-        -- 出错后需要停止播放器
-        aliPlayer.stop();
+-- 错误回调:logcat 输出真实错误码,界面 Toast 提示用户
+player.addListener(Player.Listener {
+    onPlayerError = function(e)
+        local code = tostring(e.getErrorCodeName())
+        local msg = tostring(e.getMessage())
+        Log.e("ExoPlayer", "播放错误 code=" .. code .. " msg=" .. msg)
+        print("ExoPlayer 播放错误 code=" .. code .. " msg=" .. msg)
+        Toast.makeText(activity, 播放错误提示(code), Toast.LENGTH_LONG).show()
     end
 })
 
--- 调用 aliPlayer.prepare() 方法后，播放器开始读取并解析数据。成功后，会回调此接口
-aliPlayer.setOnPreparedListener(IPlayer.OnPreparedListener {
-    onPrepared = function()
-        -- 开始播放
-        aliPlayer.start();
-    end
-});
-
--- 播放完成之后，就会回调到此接口
-aliPlayer.setOnCompletionListener(IPlayer.OnCompletionListener {
-    onCompletion = function()
-        -- 停止播放
-        aliPlayer.stop();
-    end
-});
-
--- 监听播放器中的一些信息，包括：当前进度、缓存位置等等
-aliPlayer.setOnInfoListener(IPlayer.OnInfoListener {
-    onInfo = function(infoBean)
-        code = infoBean.getCode(); -- 信息码
-        msg = infoBean.getExtraMsg(); -- 信息内容
-        value = infoBean.getExtraValue(); -- 信息值
-
-        -- 当前进度：InfoCode.CurrentPosition
-        -- 当前缓存位置：InfoCode.BufferedPosition
-    end
-});
-
--- 播放器的加载状态, 网络不佳时，用于展示加载画面
-aliPlayer.setOnLoadingStatusListener(IPlayer.OnLoadingStatusListener {
-    onLoadingBegin = function()
-        -- 开始加载(画面和声音不足以播放)
-    end,
-    onLoadingProgress = function(percent, netSpeed)
-        -- 加载进度(百分比和网速)
-    end,
-    onLoadingEnd = function()
-        -- 结束加载(画面和声音可以播放)
-    end
-});
-
--- 设置显示View
-surface_view.getHolder().addCallback(SurfaceHolder.Callback {
-    surfaceCreated = function(holder)
-        aliPlayer.setSurface(holder.getSurface());
-    end,
-    surfaceChanged = function(holder, format, width, height)
-        aliPlayer.surfaceChanged();
-    end,
-    surfaceDestroyed = function(holder) aliPlayer.setSurface(nil); end
-});
-
--- 播放视频
--- local url="https://vip.lz-cdn14.com/20220716/4878_e679da3c/index.m3u8"
-urlSource = UrlSource();
-urlSource.setUri(url);
-aliPlayer.setDataSource(urlSource);
-aliPlayer.setAutoPlay(true); -- 自动播放
-aliPlayer.prepare();
+-- 开始播放
+if url ~= "" then
+    player.setMediaItem(MediaItem.fromUri(url))
+    player.prepare()
+    player.play() -- 等价 setPlayWhenReady(true)
+else
+    Log.e("ExoPlayer", "未传入视频地址")
+    print("ExoPlayer 未传入视频地址")
+end
 
 parameter = 0
 function onKeyDown(code, event)
     if string.find(tostring(event), "KEYCODE_BACK") ~= nil then
         if parameter + 2 > tonumber(os.time()) then
-            if aliPlayer then
-                -- 退出停止播放
-                aliPlayer.stop()
+            if player then
+                -- 退出前释放播放器
+                player.release()
             end
             activity.finish()
         else

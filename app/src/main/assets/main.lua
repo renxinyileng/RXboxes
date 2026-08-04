@@ -713,7 +713,8 @@ mListView1.onItemClick = function(p, v, i, s)
         if get_file_type(filename) == "pdf" then
             activity.newActivity("pdfread", { currentPath .. filename })
         elseif get_file_type(filename) == "m3u8" or get_file_type(filename) == "mp4" then
-            activity.newActivity("aliyun_player/MP4", { filename })
+            -- 与 pdf 分支一致,传完整路径
+            activity.newActivity("aliyun_player/MP4", { currentPath .. filename })
         else
             提示("暂时未适配的内容")
         end
