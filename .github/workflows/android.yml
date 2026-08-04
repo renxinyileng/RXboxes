@@ -50,6 +50,20 @@ jobs:
             echo "✅ $want"
           done
 
+          # AndroLua 的 Lua C 模块靠 require 走 package.cpath 找 so，那是文件
+          # 系统路径，所以 so 必须解压到 nativeLibraryDir。extractNativeLibs
+          # 一旦变成 false，System.loadLibrary 还能用但 require 全线失败，
+          # main.lua 第 11 行就中断 —— 装到机器上才看得出来，必须在这里拦。
+          echo "-- extractNativeLibs"
+          AAPT="$(ls -1 "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)"
+          if "$AAPT" dump xmltree --file AndroidManifest.xml "$APK" \
+               | grep -q 'extractNativeLibs.*=.*true'; then
+            echo "✅ extractNativeLibs=true（so 会解压到 nativeLibraryDir）"
+          else
+            echo "::error::extractNativeLibs 不是 true —— Lua 的 require 将找不到 libsocket.so 等模块"
+            exit 1
+          fi
+
           # Android 15 起设备可能用 16KB 内存页，未按 16KB 对齐的 so 会加载失败。
           # 少一个都可能让整个 App 起不来，所以逐个查 LOAD 段的对齐。
           echo "-- 16KB 页对齐"

@@ -43,6 +43,25 @@ android {
         }
     }
 
+    packaging {
+        jniLibs {
+            // 必须让 so 解压到 nativeLibraryDir，不能留在 APK 里。
+            //
+            // AndroLua 的 14 个 Lua C 模块（libsocket.so、libcjson.so 等）不是
+            // 用 System.loadLibrary 加载的，而是 Lua 的 require 走 package.cpath
+            // 找过去 —— 那是文件系统路径，so 必须真实落盘。
+            //
+            // AGP 在 minSdk >= 23 时默认 extractNativeLibs=false，so 留在 APK
+            // 内不落盘。此时 System.loadLibrary 照常能用（libluajava.so 就是
+            // 这么加载的），但 require 一律找不到，main.lua:11 的
+            // require("socket") 直接失败、整个脚本中断。
+            //
+            // 原工程 minSdk 是 21（AGP 因此保持 extractNativeLibs=true）所以从
+            // 没暴露；本次为了 Material 1.14 抬到 23 才触发。
+            useLegacyPackaging = true
+        }
+    }
+
     lint {
         abortOnError false
         checkReleaseBuilds false
