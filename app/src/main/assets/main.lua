@@ -265,57 +265,6 @@ page2 = {
         id = "aria2web",
     },
 };
-page3 = { LinearLayout;
-          layout_width = "-1",
-          layout_height = "-1",
-          orientation = "vertical",
-          {
-              EditText;
-              layout_width = "-1",
-              layout_height = "-2",
-              id = "edit2",
-              text = "",
-              gravity = "center",
-          },
-          {
-              Button;
-              layout_width = "-1",
-              layout_height = "-2",
-              text = "查询",
-              id = "button",
-          },
-          {
-              ScrollView;
-              layout_width = "-1",
-              layout_height = "-1",
-              {
-                  LinearLayout;
-                  layout_width = "-1",
-                  layout_height = "-1",
-                  orientation = "vertical",
-                  {
-                      TextView;
-                      layout_width = "-1",
-                      layout_height = "-2",
-                      text = "",
-                      id = "text",
-                  },
-              },
-          },
-}
-page4 = {
-    LinearLayout;
-    layout_height = "match_parent";
-    gravity = "center";
-    layout_width = "match_parent";
-    orientation = "vertical";
-    {
-        WebView;
-        layout_width = "-1",
-        layout_height = "-1",
-        id = "web",
-    },
-};
 page5 = {
     LinearLayout;
     orientation = "vertical";
@@ -524,7 +473,6 @@ adp = ArrayPageAdapter()
 pagev.setAdapter(adp)
 adp.add(loadlayout(page5))
 adp.add(loadlayout(page1))
-adp.add(loadlayout(page3))
 adp.add(loadlayout(page2))
 adp.add(loadlayout(page4))
 Drawer.setScrimColor(0)
@@ -743,91 +691,6 @@ end
 
 function json_tale(str)
     return stringToTable(jsontostring(str))
-end
-function 查询结果(data, zhi)
-    if data.status == nil or data.status == "" or data.message == nil or data.message == "" then
-        text.setText(str1 .. "\n" .. zhi .. "查询结果为空")
-    else
-        text.setText(str1 .. "\n" .. "状态:" .. data.status .. "\n" .. "查询结果:" .. data.message)
-    end
-end
-button.onClick = function()
-    local edit = edit2.getText().toString()
-    if edit ~= "" or edit ~= nil then
-        Http.get("https://zy.xywlapi.cc/lolname?name=" .. edit, function(code, data)
-            data = stringToTable(jsontostring(data))
-            if tostring(code) == "200" then
-                str1 = text.getText()
-                if data.qq == nil or data.qq == "" then
-                    查询结果(data, "LOL网名查绑定QQ")
-                else
-                    text.setText(str1 .. "\n查询到的QQ账户：" .. data.qq)
-                end
-            end
-        end)
-        Http.get("https://zy.xywlapi.cc/qqlol?qq=" .. edit, function(code, data)
-            data = stringToTable(jsontostring(data))
-            if tostring(code) == "200" then
-                str1 = text.getText()
-                if data.name == nil or data.name == "" then
-                    查询结果(data, "QQ查绑定LOL网名")
-                else
-                    if data.daqu == nil or data.daqu == "" then
-                        text.setText(str1 .. "\n查询到的LOL游戏名：" .. data.name)
-                    else
-                        text.setText(str1 .. "\n查询到的账户名：" .. data.name .. "\n查询到的大区：" .. data.daqu)
-                    end
-                end
-            end
-        end)
-        Http.get("https://zy.xywlapi.cc/qqphone?phone=" .. edit, function(code, data)
-            data = stringToTable(jsontostring(data))
-            if tostring(code) == "200" then
-                str1 = text.getText()
-                if data.qq == nil or data.qq == "" then
-                    查询结果(data, "手机号查绑定QQ")
-                else
-                    text.setText(str1 .. "\n查询到的QQ账户：" .. data.qq)
-                end
-            end
-        end)
-        Http.get("https://zy.xywlapi.cc/qqapi?qq=" .. edit, function(code, data)
-            data = stringToTable(jsontostring(data))
-            if tostring(code) == "200" then
-                str1 = text.getText()
-                if data.phone == nil or data.phone == "" then
-                    查询结果(data, "QQ查绑定手机号")
-                else
-                    text.setText(str1 .. "\n查询到的手机号：" .. data.phone)
-                    return data.phone
-                end
-            end
-        end)
-        Http.get("https://zy.xywlapi.cc/wbapi?id=" .. edit, function(code, data)
-            data = stringToTable(jsontostring(data))
-            if tostring(code) == "200" then
-                str1 = text.getText()
-                if data.phone == nil or data.phone == "" then
-                    查询结果(data, "微博查绑定手机号")
-                else
-                    text.setText(str1 .. "\n查询到的手机号：" .. data.phone)
-                end
-            end
-        end)
-        Http.get("https://zy.xywlapi.cc/wbphone?phone=" .. edit, function(code, data)
-            data = stringToTable(jsontostring(data))
-            if tostring(code) == "200" then
-                str1 = text.getText()
-                if data.id == nil or data.id == "" then
-                    查询结果(data, "手机号查绑定微博")
-                else
-                    text.setText(str1 .. "\n查询到的微博ID：" .. data.id)
-                end
-            end
-        end)
-    else
-        提示("请输入要查询的内容")
-    end
 end
 --titlebar配置
 import "android.graphics.Paint"
