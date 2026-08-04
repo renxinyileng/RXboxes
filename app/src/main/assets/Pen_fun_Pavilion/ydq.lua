@@ -1,5 +1,5 @@
 require "import"
-activity.getSupportActionBar().hide()
+pcall(function() activity.getActionBar().hide() end)
 import "Pen_fun_Pavilion.hs"
 import "android.content.Intent"
 this.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |

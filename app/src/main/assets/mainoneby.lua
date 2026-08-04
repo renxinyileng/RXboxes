@@ -10,7 +10,7 @@ import "aria2.main"
 --StatService.start(this)
 --activity.setTitle(R.string.app_name)
 --activity.setTitle("")
-actionBar = activity.getSupportActionBar()
+actionBar = activity.getActionBar()
 actionBar.hide()
 --actionBar.setTitle("")
 --this.setTitle("")
