@@ -7,7 +7,7 @@ import "com.aliyun.player.*"
 import "com.aliyun.player.AliPlayerFactory"
 import "com.aliyun.player.IPlayer"
 import "com.aliyun.player.source.UrlSource"
-activity.getSupportActionBar().hide()
+pcall(function() activity.getActionBar().hide() end)
 url = ...
 layout = {
     LinearLayout,

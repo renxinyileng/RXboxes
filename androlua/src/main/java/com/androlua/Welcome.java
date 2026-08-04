@@ -58,11 +58,6 @@ public class Welcome extends Activity {
     public void onCreate(Bundle savedInstanceState) {
 
         super.onCreate(savedInstanceState);
-        TextView view = new TextView(this);
-        view.setText(new String(new char[]{'P', 'o', 'w', 'e', 'r', 'e', 'd', ' ', 'b', 'y', ' ', 'A', 'n', 'd', 'o', 'L', 'u', 'a', '+'}));
-        view.setTextColor(0xff888888);
-        view.setGravity(Gravity.TOP);
-        setContentView(view);
         app = (LuaApplication) getApplication();
         luaMdDir = app.luaMdDir;
         localDir = app.localDir;

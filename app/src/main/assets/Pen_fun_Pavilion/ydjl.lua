@@ -1,6 +1,6 @@
 require "import"
 import "Pen_fun_Pavilion.hs"
-activity.getSupportActionBar().hide()
+pcall(function() activity.getActionBar().hide() end)
 FavoritePath = "/storage/emulated/0/Android/data/" .. tostring(activity.getPackageName()) .. "/笔趣阁/"
 activity.setTitle("阅读记录")
 local array = this.getTheme().obtainStyledAttributes({
@@ -116,7 +116,7 @@ layout = {
     }
 }
 activity.setContentView(layout)
-activity.getSupportActionBar().setDisplayHomeAsUpEnabled(true)
+pcall(function() activity.getActionBar().setDisplayHomeAsUpEnabled(true) end)
 
 local optmenu = {}
 function onCreateOptionsMenu(menu)
