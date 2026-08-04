@@ -9,8 +9,12 @@ android {
         minSdk rootProject.ext.min_sdk
         //原作者没更新到最新安卓版本一动就死
         targetSdk rootProject.ext.target_sdk
-        versionCode 20231120
-        versionName "1.0.0正式版"
+        versionCode 20260807
+        versionName "1.0.3正式版"
+        // 注意:AndroLua 的 LuaApplication.updateAssets() 只在 versionName 变化时
+        // 才把 APK 内 assets 重新解压到 files 目录。改过 assets 下的 lua 脚本后
+        // 必须递增 versionName(建议同步递增 versionCode),否则设备上会一直
+        // 运行旧脚本,出现 "cannot find 某类" 之类的诡异错误。
     }
 
     compileOptions {
@@ -83,7 +87,9 @@ dependencies {
     // 那种从可写目录加载 dex 的方式已被 Android 拒绝
     implementation "androidx.swiperefreshlayout:swiperefreshlayout:$rootProject.ext.swiperefreshlayout_version"
     implementation "es.voghdev.pdfviewpager:library:$rootProject.ext.pdfviewpager_version"
-    implementation "com.aliyun.sdk.android:AliyunPlayer:$rootProject.ext.aliyun_player_version"
+    // Google 官方播放器 Media3 ExoPlayer,替换阿里云播放器 AliyunPlayer(7.16.0)
+    implementation "androidx.media3:media3-exoplayer:$rootProject.ext.media3_version"
+    implementation "androidx.media3:media3-ui:$rootProject.ext.media3_version"
     implementation "com.tencent.tbs:tbssdk:$rootProject.ext.tbssdk_version"
 
     // okhttp 保持 3.x：Lua 脚本按 Java 风格调用 response.code()/body().string()，
