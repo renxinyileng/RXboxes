@@ -156,10 +156,13 @@ function 弹窗UI(标题, 内容, 确认事件, 取消事件, 按钮1, 按钮2, 
     xxx.getWindow().setBackgroundDrawable(ColorDrawable(0x00000000))
     function 波纹特效v2(颜色)
         import "android.content.res.ColorStateList"
-        return activity.Resources.getDrawable(activity.obtainStyledAttributes({ android.R.attr.selectableItemBackground --[[Borderless]] })
+        local d = activity.Resources.getDrawable(activity.obtainStyledAttributes({ android.R.attr.selectableItemBackground --[[Borderless]] })
                                                       .getResourceId(0, 0))
-                       .setColor(ColorStateList(int[0]
-                .class { int {} }, int { 颜色 or 0x20000000 }))
+        if d ~= nil then
+            d.setTintList(ColorStateList(int[0]
+                    .class { int {} }, int { 颜色 or 0x20000000 }))
+        end
+        return d
     end
 
     确认.onClick = function()
