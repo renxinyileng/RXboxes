@@ -474,7 +474,6 @@ pagev.setAdapter(adp)
 adp.add(loadlayout(page5))
 adp.add(loadlayout(page1))
 adp.add(loadlayout(page2))
-adp.add(loadlayout(page4))
 Drawer.setScrimColor(0)
 --page1运行配置
 function search()
@@ -566,54 +565,6 @@ list.Adapter = adp
 list.onItemClick = function(parent, v, pos, id)
     -- 直接调用新的Activity，无需中间变量
     activity.newActivity("aliyun_player/aliyun_player", { v.Tag.内容.Text })
-end
---page4运行配置
-activity.getWindow().setFormat(PixelFormat.TRANSLUCENT);
-web.getSettings().setJavaScriptEnabled(true);
-web.getSettings().setTextZoom(100)
-web.setNetworkAvailable(true)
-web.getSettings().setDisplayZoomControls(false)
-web.getSettings().setSupportZoom(true)
-web.getSettings().setDomStorageEnabled(true)
-web.getSettings().setDatabaseEnabled(true)
-web.getSettings().setUseWideViewPort(true)
-web.getSettings().setAllowFileAccess(true)
-web.getSettings().setBuiltInZoomControls(true)
-web.getSettings().setLoadWithOverviewMode(true)
-web.getSettings().setLoadsImagesAutomatically(true)
-web.getSettings().setSaveFormData(true)
-web.getSettings().setAllowContentAccess(true)
-web.getSettings().setJavaScriptEnabled(true)
-web.getSettings().supportMultipleWindows()
-web.getSettings().setUseWideViewPort(true)
-web.getSettings().setCacheMode(web.getSettings().LOAD_CACHE_ELSE_NETWORK)
-web.getSettings().setLayoutAlgorithm(web.getSettings().LayoutAlgorithm.SINGLE_COLUMN)
-web.setLayerType(View.LAYER_TYPE_HARDWARE, nil)
-web.getSettings().setPluginsEnabled(true)
-web.setOverScrollMode(WebView.OVER_SCROLL_NEVER)
-web.getSettings().setJavaScriptCanOpenWindowsAutomatically(true)
-web.getSettings().setBlockNetworkImage(false)
-web.getSettings().setAllowFileAccess(true)
-if Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN then
-    web.getSettings().setAllowFileAccessFromFileURLs(true)
-    web.getSettings().setAllowUniversalAccessFromFileURLs(true)
-end
-web.getSettings().setNeedInitialFocus(true)
-web.getSettings().setDefaultTextEncodingName("UTF-8")
-web.getSettings().setDefaultFontSize(16)
-web.getSettings().setMinimumFontSize(12)
-web.getSettings().setGeolocationEnabled(true)
-if Build.VERSION.SDK_INT >= 20 then
-    web.setWebContentsDebuggingEnabled(true)
-end
-setting = web.getSettings()
-setting.setUseWideViewPort(true)
-setting.setLoadWithOverviewMode(true)
-setting.setBuiltInZoomControls(false)
-if network==true then
-web.loadUrl("https://rxblog.xyz")
-elseif network==false then
-web.loadUrl("file:///android_asset/404.html")
 end
 --page2配置
 aria2web.getSettings().setJavaScriptEnabled(true);
