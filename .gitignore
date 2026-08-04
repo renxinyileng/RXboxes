@@ -38,3 +38,4 @@ native/aria2/.work/
 native/aria2/out/
 
 gradle/gradle-daemon-jvm.properties
+/.reasonix
