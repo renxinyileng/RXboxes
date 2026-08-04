@@ -3,4 +3,8 @@
 
     <string name="lib_name">Androlua</string>
 
+    <!-- accessibility_service_config.xml 的 android:description 指向它，
+         少了这条无障碍服务配置就编不过 -->
+    <string name="accsibility_service_description">辅助功能</string>
+
 </resources>

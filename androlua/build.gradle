@@ -47,7 +47,17 @@ android {
 }
 
 dependencies {
-    // AndroLua+ 5.0.22 预编译 jar（上游未公开该版本源码，只能整包引入）
-    api fileTree(dir: 'libs', include: ['*.jar'])
+    // 原来这里是 AndroLua+5.0.22_xbm_AndroidX.jar —— 一个混淆过的预编译包，
+    // 出了问题既看不到源码也改不动。现已换成 AndroLua_Pro_Plus 的源码
+    // （src/main/java 下 460 个文件），顺带甩掉 jar 里捆的 Baidu 移动统计
+    // （原 LuaActivity.onCreate/onResume/onPause 和 Main 都会调 StatService）
+    // 和一整套用不上的 BeanShell。
     implementation "androidx.appcompat:appcompat:$rootProject.ext.appcompat_version"
+
+    // AndroLua_Pro_Plus 源码自身的编译期依赖，只有这两个是被直接 import 的：
+    //   commons-compress —— LuaUtil/WriteTask 的 zip 读写
+    //   JsoupXpath       —— com.androlua.util.XpathUtil（连带把 jsoup、
+    //                       commons-io 作为传递依赖带进来，无需显式声明）
+    api "org.apache.commons:commons-compress:$rootProject.ext.commons_compress_version"
+    api "cn.wanghaomiao:JsoupXpath:$rootProject.ext.jsoupxpath_version"
 }
