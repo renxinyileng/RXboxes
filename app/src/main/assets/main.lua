@@ -575,23 +575,42 @@ local layout2 = {
     };
 };
 adp = LuaAdapter(activity, layout2)
-function addlb(title, m3u8)
-    adp.add { 标题 = tostring(title), 内容 = tostring(m3u8) }
+
+-- 把解析好的频道一次性灌进 adapter。
+-- 必须在主 state 里执行：adp 是主 state 的对象，子线程看不见它。
+-- 用 addAll 而不是逐条 add —— addAll 只在最后 notifyDataSetChanged 一次，
+-- 逐条塞 680 个频道会刷新列表 680 次。
+function 填充频道列表(内容)
+    local 频道 = {}
+    for 名称, 地址 in tostring(内容):gmatch("#EXTINF:.-,(.-)\n(.-)\n") do
+        频道[#频道 + 1] = { 标题 = 名称, 内容 = 地址 }
+    end
+    if #频道 == 0 then
+        提示("频道列表为空")
+        return
+    end
+    adp.addAll(频道)
 end
+
 function Parsing_M3u()
     require "import"
-    local file = io.open(activity.getApplicationInfo().dataDir .. "/m3u/TV-IPV4.m3u", "r")
-    -- Check if the file exists
-if file then
-    -- Read the contents of the file
+    -- 频道列表由 Welcome 从 assets 整个解压到 luaDir，路径就是 assets 里的相对路径。
+    -- 之前这里写的是 dataDir.."/m3u/TV-IPV4.m3u"，目录和文件名都对不上，
+    -- 文件永远打不开，于是每次启动都走 else 分支 —— 而那里调的 提示() 在
+    -- 子线程里根本不存在：thread() 会新建一个 LuaState，只注入 activity、
+    -- print、call 等少数几个全局，main.lua 里 require 来的 rxteam 不在其中。
+    local 频道列表文件 = activity.getLuaDir() .. "/iptv/m3u/cniptvsource.m3u"
+    local file = io.open(频道列表文件, "r")
+    if not file then
+        -- 子线程里只有 print 可用，它会打到 logcat
+        print("频道列表文件不存在：" .. 频道列表文件)
+        return
+    end
     local content = file:read("*all")
     file:close()
-    for title, m3u8 in content:gmatch("#EXTINF:.-,(.-)\n(.-)\n") do
-        call("addlb", tostring(title), tostring(m3u8))
-    end
-else
-    提示("File does not exist")
-end
+    -- 解析放回主线程做：120KB 的 gmatch 只要几毫秒，
+    -- 而跨 state 传一个 680 项的表要逐项 marshal，传字符串反而更省
+    call("填充频道列表", content)
 end
 thread(Parsing_M3u)
 list.Adapter = adp
