@@ -20,17 +20,29 @@ hook `luaL_loadbufferx` 在解密后的那一刻 dump 内存明文。
 | `native/luaenc/pack.py` | 打包端加密器，密钥直接从 `luaenc.c` 解析，两端不漂移 |
 | `.github/workflows/android.yml`（改动） | 签名前把 APK 内 `.lua` 全部改写成密文并校验 |
 
-## 密文格式
+## 密文格式（无明文魔数）
 
 ```
-magic[5] = 1B 4C 45 4E 43  ("\x1bLENC")
-ver[1]   = 0x01
-nonce[8] = 每个文件随机（明文存放，仅用于让各文件密钥流互相独立）
+nonce[8] = 每个文件随机（明文存放，让各文件密钥流互相独立）
+tag[8]   = SHA256(KEY || nonce) 前 8 字节
 ct[...]  = 明文 XOR 密钥流
 ```
 
+**没有固定魔数**：整个头就是 nonce + tag，对没有 KEY 的人来说与随机字节
+不可区分——grep 不到签名，打开文件也看不出用了什么方案。tag 同时充当
+「是不是本方案加密的」判据和密钥/完整性校验：读头 16 字节，用 nonce 重算
+SHA256(KEY||nonce)[:8] 与 tag 比对，命中才解密。
+
 密钥流（CTR 模式，SHA-256 当 PRF）：
 `block_j = SHA256(KEY(32) || nonce(8) || u64_le(j))`，`j = 0,1,2,…`
+
+tag 输入是 `KEY||nonce`（40B），密钥流输入是 `KEY||nonce||ctr8`（48B），
+长度不同 → tag 绝不撞任何密钥流块，天然域分离。明文脚本首 16 字节恰好通过
+tag 校验的概率约 2^-64，可忽略，不会把明文误判成密文。
+
+> 注：`.lua` 后缀仍保留在 APK 内。改后缀会牵动 AndroLua 的 require/doFile/
+> newActivity 名称解析（硬编码 `.lua`）以及 Welcome 对 main.lua/init.lua 的
+> 特判，回归面大而收益低（本就是明显的 AndroLua 应用），故未动。
 
 ## 为什么钩这两个函数就够
 
