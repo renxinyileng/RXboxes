@@ -93,6 +93,22 @@ jobs:
           fi
 
       # 直接调用 build-tools 里的 zipalign / apksigner，
+      # 把 APK 里的 .lua 脚本换成密文。必须在签名之前做：这样签名覆盖的是
+      # 密文，装到机器上磁盘里也只有密文，运行时由 libluajava 的
+      # luaL_loadfilex/luaL_loadbufferx 在内存里解密（见 jni/lua/luaenc.c）。
+      # 算法与密钥同源自 luaenc.c，pack.py 直接解析它，两端不会漂移。
+      - name: 加密 Lua 脚本
+        run: |
+          set -euo pipefail
+          # 先自测，密钥/算法一旦对不上立刻红，不要等装到机器上才发现
+          python3 native/luaenc/pack.py selftest
+          APK="$(ls app/build/outputs/apk/release/*.apk | head -1)"
+          echo "加密 $APK 内的 .lua"
+          python3 native/luaenc/pack.py enc-apk "$APK" "$RUNNER_TEMP/enc.apk"
+          mv "$RUNNER_TEMP/enc.apk" "$APK"
+          # 断言：APK 内每个 .lua 都已是密文、且能解回
+          python3 native/luaenc/pack.py verify-apk "$APK"
+
       # 不再依赖已停更的第三方签名 Action
       - name: 签名APK文件
         if: steps.check_key.outputs.available == 'true'

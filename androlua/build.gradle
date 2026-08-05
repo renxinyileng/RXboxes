@@ -48,16 +48,14 @@ android {
 
 dependencies {
     // 原来这里是 AndroLua+5.0.22_xbm_AndroidX.jar —— 一个混淆过的预编译包，
-    // 出了问题既看不到源码也改不动。现已换成 AndroLua_Pro_Plus 的源码
-    // （src/main/java 下 460 个文件），顺带甩掉 jar 里捆的 Baidu 移动统计
-    // （原 LuaActivity.onCreate/onResume/onPause 和 Main 都会调 StatService）
-    // 和一整套用不上的 BeanShell。
+    // 出了问题既看不到源码也改不动。现已换成 AndroLua_Pro_Plus 的源码，
+    // 顺带甩掉 jar 里捆的 Baidu 移动统计（原 LuaActivity.onCreate/onResume/
+    // onPause 和 Main 都会调 StatService）和一整套用不上的 BeanShell。
+    //
+    // commons-compress 和 JsoupXpath 曾经也在这里：前者只被
+    // com.androlua.util.ArcZipUtil 用，后者只被 com.androlua.util.XpathUtil 用，
+    // 这两个类全工程无人引用、也没有任何 .lua 脚本按名字取用，已随之删除。
+    // 少掉的不只是两个依赖 —— commons-compress 原本必须钉死在 1.21
+    // （它的 utils.IOUtils 在 1.26 被删掉），这条版本约束也一并没有了。
     implementation "androidx.appcompat:appcompat:$rootProject.ext.appcompat_version"
-
-    // AndroLua_Pro_Plus 源码自身的编译期依赖，只有这两个是被直接 import 的：
-    //   commons-compress —— LuaUtil/WriteTask 的 zip 读写
-    //   JsoupXpath       —— com.androlua.util.XpathUtil（连带把 jsoup、
-    //                       commons-io 作为传递依赖带进来，无需显式声明）
-    api "org.apache.commons:commons-compress:$rootProject.ext.commons_compress_version"
-    api "cn.wanghaomiao:JsoupXpath:$rootProject.ext.jsoupxpath_version"
 }

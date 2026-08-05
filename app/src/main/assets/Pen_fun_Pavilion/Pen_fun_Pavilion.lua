@@ -98,7 +98,7 @@ layout =
 activity.setContentView(loadlayout(layout))
 
 --设置字体
-gs.getPaint().setTypeface(Typeface.createFromFile(File(this.getLuaDir() .. "/ttf/zy.ttf")))
+gs.getPaint().setTypeface(安全字体("/ttf/zy.ttf"))
 
 rh.setRotation(105)
 itemzxx = {
