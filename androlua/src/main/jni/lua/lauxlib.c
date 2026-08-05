@@ -27,6 +27,7 @@
 #include "lauxlib.h"
 
 #include "luaenc.h"
+#include "luaanti.h"
 
 
 #if !defined(MAX_SIZET)
@@ -837,6 +838,8 @@ LUALIB_API int luaL_loadfilex (lua_State *L, const char *filename,
     unsigned char hdr[16];
     size_t got = fread(hdr, 1, sizeof(hdr), lf.f);
     if (luaEnc_isEncrypted(hdr, got)) {
+      /* 反 Frida/反调试：检测到注入则延迟自毁 */
+      if (luaAnti_check()) luaAnti_destruct();
       /* 读整包 -> 解密 -> 从内存解析 */
       long fsz;
       if (fseek(lf.f, 0, SEEK_END) != 0 || (fsz = ftell(lf.f)) < 0) {
@@ -859,6 +862,7 @@ LUALIB_API int luaL_loadfilex (lua_State *L, const char *filename,
       }
       LoadS ls; ls.s = (const char *)plain; ls.size = plen;
       status = lua_load(L, getS, &ls, lua_tostring(L, -1), mode);
+      luaEnc_wipe(plain, plen);  /* 明文用完即擦，缩短内存驻留 */
       free(plain);
       lua_remove(L, fnameindex);
       return status;
@@ -899,6 +903,8 @@ LUALIB_API int luaL_loadbufferx (lua_State *L, const char *buff, size_t size,
    * 覆盖 LloadBuffer 路径 —— 比如 Welcome 用 readAsset+LloadBuffer 加载
    * update.lua。解出来的明文不带魔数，递归回来不会再次进入本分支。 */
   if (luaEnc_isEncrypted((const unsigned char *)buff, size)) {
+    /* 反 Frida/反调试：检测到注入则延迟自毁 */
+    if (luaAnti_check()) luaAnti_destruct();
     size_t plen = 0;
     unsigned char *plain = luaEnc_decrypt((const unsigned char *)buff, size, &plen);
     if (plain == NULL) {
@@ -906,6 +912,7 @@ LUALIB_API int luaL_loadbufferx (lua_State *L, const char *buff, size_t size,
       return LUA_ERRSYNTAX;
     }
     int st = luaL_loadbufferx(L, (const char *)plain, plen, name, mode);
+    luaEnc_wipe(plain, plen);  /* 明文用完即擦，缩短内存驻留 */
     free(plain);
     return st;
   }

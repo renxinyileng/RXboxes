@@ -97,14 +97,26 @@ jobs:
       # 密文，装到机器上磁盘里也只有密文，运行时由 libluajava 的
       # luaL_loadfilex/luaL_loadbufferx 在内存里解密（见 jni/lua/luaenc.c）。
       # 算法与密钥同源自 luaenc.c，pack.py 直接解析它，两端不会漂移。
+      #
+      # 阶段 A：先构建 host lua（与设备 so 同一份源码，含定制 VM 重排与
+      # 常量盐），把每个 .lua 用 string.dump(f,true) 编译成 strip 调试信息
+      # 的字节码再加密 —— unluac 依赖调试信息，strip 后直接失效。
+      - name: 构建 host lua（用于 strip 编译）
+        run: |
+          make -C androlua/src/main/jni/lua all \
+            MYCFLAGS="-std=c99 -DLUA_USE_LINUX" MYLIBS="-ldl" \
+            -j"$(nproc)"
+          test -x androlua/src/main/jni/lua/lua
+
       - name: 加密 Lua 脚本
         run: |
           set -euo pipefail
           # 先自测，密钥/算法一旦对不上立刻红，不要等装到机器上才发现
           python3 native/luaenc/pack.py selftest
           APK="$(ls app/build/outputs/apk/release/*.apk | head -1)"
-          echo "加密 $APK 内的 .lua"
-          python3 native/luaenc/pack.py enc-apk "$APK" "$RUNNER_TEMP/enc.apk"
+          echo "加密 $APK 内的 .lua（strip 编译 + 加密）"
+          python3 native/luaenc/pack.py enc-apk "$APK" "$RUNNER_TEMP/enc.apk" \
+            --lua androlua/src/main/jni/lua/lua
           mv "$RUNNER_TEMP/enc.apk" "$APK"
           # 断言：APK 内每个 .lua 都已是密文、且能解回
           python3 native/luaenc/pack.py verify-apk "$APK"

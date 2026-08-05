@@ -49,7 +49,8 @@ LOCAL_SRC_FILES := \
 	lbitlib.c \
 	lvm.c \
 	lzio.c \
-	luaenc.c
+	luaenc.c \
+	luaanti.c
 
 LOCAL_CFLAGS += -DLUA_DL_DLOPEN -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE
 
