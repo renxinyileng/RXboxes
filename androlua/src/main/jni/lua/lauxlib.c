@@ -834,7 +834,7 @@ LUALIB_API int luaL_loadfilex (lua_State *L, const char *filename,
    * package.path、dofile/loadfile）最终都过 luaL_loadfilex，所以这一个点就
    * 兜住了文件加载路径。只在带魔数时改道，普通/字节码文件走下面原逻辑不变。 */
   if (filename != NULL) {
-    unsigned char hdr[14];
+    unsigned char hdr[16];
     size_t got = fread(hdr, 1, sizeof(hdr), lf.f);
     if (luaEnc_isEncrypted(hdr, got)) {
       /* 读整包 -> 解密 -> 从内存解析 */
