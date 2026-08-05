@@ -397,7 +397,7 @@ sz.onClick = function()
                     textColor = 0xFF000000,
                     id = "zt1",
                     onClick = function()
-                        zw.getPaint().setTypeface(Typeface.createFromFile(File(this.getLuaDir() .. "/ttf/tianzhen.ttf")))
+                        zw.getPaint().setTypeface(安全字体("/ttf/tianzhen.ttf"))
                     end,
                 },
                 {
@@ -408,7 +408,7 @@ sz.onClick = function()
                     textColor = 0xFF000000,
                     id = "zt2",
                     onClick = function()
-                        zw.getPaint().setTypeface(Typeface.createFromFile(File(this.getLuaDir() .. "/ttf/zy.ttf")))
+                        zw.getPaint().setTypeface(安全字体("/ttf/zy.ttf"))
                     end,
                 },
                 {
@@ -419,7 +419,7 @@ sz.onClick = function()
                     textColor = 0xFF000000,
                     id = "zt3",
                     onClick = function()
-                        zw.getPaint().setTypeface(Typeface.createFromFile(File(this.getLuaDir() .. "/ttf/xyjz.ttf")))
+                        zw.getPaint().setTypeface(安全字体("/ttf/xyjz.ttf"))
                     end,
                 },
             },
@@ -541,9 +541,9 @@ sz.onClick = function()
     dialog.getWindow().getAttributes().width = activity.Width
     dialog.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
     动画显示(l)
-    zt1.getPaint().setTypeface(Typeface.createFromFile(File(this.getLuaDir() .. "/ttf/tianzhen.ttf")))
-    zt2.getPaint().setTypeface(Typeface.createFromFile(File(this.getLuaDir() .. "/ttf/zy.ttf")))
-    zt3.getPaint().setTypeface(Typeface.createFromFile(File(this.getLuaDir() .. "/ttf/xyjz.ttf")))
+    zt1.getPaint().setTypeface(安全字体("/ttf/tianzhen.ttf"))
+    zt2.getPaint().setTypeface(安全字体("/ttf/zy.ttf"))
+    zt3.getPaint().setTypeface(安全字体("/ttf/xyjz.ttf"))
 
 end
 

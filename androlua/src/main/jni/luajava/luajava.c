@@ -2335,21 +2335,6 @@ Java_com_luajava_LuaState__1toThread(JNIEnv *env, jobject jobj, jlong cptr,
 *      Lua Exported Function
 ************************************************************************/
 
-/* AndroLua_Pro_Plus 的 LuaState.java 声明了 topointer，原来那份预编译
- * jar 里没有，所以之前的 luajava.c 也没导出。换成源码版后不补上这个，
- * 第一次调 topointer 就是 UnsatisfiedLinkError。 */
-JNIEXPORT jlong JNICALL
-Java_com_luajava_LuaState__1topointer(JNIEnv *env, jobject jobj, jlong cptr,
-                                      jint idx) {
-    lua_State *L = getStateFromCPtr(env, cptr);
-    return (jlong) lua_topointer(L, (int) idx);
-}
-
-/************************************************************************
-*   JNI Called function
-*      Lua Exported Function
-************************************************************************/
-
 JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1pushNil(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);

@@ -4,6 +4,20 @@ import "android.widget.*"
 import "android.view.*"
 --import "AndLua"
 import "android.graphics.Typeface"
+
+-- 阅读字体（zy/tianzhen/xyjz.ttf 共约 19MB）已从安装包移除以缩减体积。
+-- 这些字体文件不再随包，直接 Typeface.createFromFile 一个不存在的文件会抛异常、
+-- 把阅读器整页带崩。这里统一走安全加载：文件在就用它，不在就回退系统字体。
+-- 由 Pen_fun_Pavilion.lua / ydq.lua 经 import "Pen_fun_Pavilion.hs" 共用。
+function 安全字体(相对路径)
+    import "java.io.File"
+    local f = File(activity.getLuaDir() .. 相对路径)
+    if f.exists() then
+        local ok, tf = pcall(function() return Typeface.createFromFile(f) end)
+        if ok and tf then return tf end
+    end
+    return Typeface.DEFAULT
+end
 import "android.view.animation.DecelerateInterpolator"
 import "android.graphics.drawable.ColorDrawable"
 import "android.animation.ObjectAnimator"
