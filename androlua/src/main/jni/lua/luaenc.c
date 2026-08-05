@@ -1,16 +1,19 @@
 /*
  * luaenc —— 见 luaenc.h。
  *
- * 密文格式（小端）：
- *   magic[5] = 1B 4C 45 4E 43  ("\x1bLENC")
- *   ver[1]   = 0x01
- *   nonce[8] = 打包时随机生成，明文存放（非机密，作用是让每个文件的
- *              密钥流互相独立，避免"同一密钥流异或两份密文抵消"这类攻击）
+ * 密文格式（无明文魔数，整头对没有密钥的人来说与随机字节不可区分）：
+ *   nonce[8] = 打包时随机生成（明文存放，仅用于让每个文件密钥流独立，
+ *              避免"同一密钥流异或两份密文抵消"这类攻击）
+ *   tag[8]   = SHA256(KEY || nonce) 的前 8 字节 —— 既当"是不是本方案加密的"
+ *              判据，又顺带校验密钥/完整性。没有 KEY 就算不出 tag，
+ *              所以文件头看不出任何固定特征、也 grep 不到签名
  *   ct[...]  = 明文 XOR 密钥流
  *
  * 密钥流（CTR 模式，SHA-256 当 PRF）：
  *   block_j = SHA256( KEY(32) || nonce(8) || u64_le(j) )   j = 0,1,2,...
  *   明文[i] = 密文[i] XOR (block_{i/32})[i%32]
+ * tag 用 SHA256(KEY||nonce)（40 字节输入），密钥流用 SHA256(KEY||nonce||ctr8)
+ *（48 字节输入），输入长度不同 → tag 绝不会撞上任何密钥流块，天然域分离。
  *
  * 内置一份公有领域 SHA-256，避免依赖任何外部库，保证与 hashlib 逐位一致。
  */
@@ -35,9 +38,9 @@ static const unsigned char LUAENC_KEY[32] = {
 };
 /* LUAENC_KEY_END */
 
-static const unsigned char LUAENC_MAGIC[5] = { 0x1b, 'L', 'E', 'N', 'C' };
-#define LUAENC_HEADER_LEN 14   /* 5 magic + 1 ver + 8 nonce */
 #define LUAENC_NONCE_LEN  8
+#define LUAENC_TAG_LEN    8
+#define LUAENC_HEADER_LEN 16   /* nonce(8) + tag(8)，无明文魔数 */
 
 /* ------------------------------- SHA-256 ------------------------------- */
 typedef struct {
@@ -121,15 +124,29 @@ static void keystream_block(const unsigned char nonce[LUAENC_NONCE_LEN],
     sha256_final(&c, out);
 }
 
+/* tag = SHA256(KEY || nonce) 前 8 字节 */
+static void compute_tag(const unsigned char nonce[LUAENC_NONCE_LEN],
+                        unsigned char out[LUAENC_TAG_LEN]) {
+    unsigned char full[32];
+    sha256_ctx c;
+    sha256_init(&c);
+    sha256_update(&c, LUAENC_KEY, sizeof(LUAENC_KEY));
+    sha256_update(&c, nonce, LUAENC_NONCE_LEN);
+    sha256_final(&c, full);
+    memcpy(out, full, LUAENC_TAG_LEN);
+}
+
 /* ------------------------------- 对外接口 ------------------------------ */
 int luaEnc_isEncrypted(const unsigned char *p, size_t n) {
-    return p && n >= LUAENC_HEADER_LEN && memcmp(p, LUAENC_MAGIC, sizeof(LUAENC_MAGIC)) == 0;
+    if (!p || n < LUAENC_HEADER_LEN) return 0;
+    unsigned char tag[LUAENC_TAG_LEN];
+    compute_tag(p, tag);                            /* p 前 8 字节即 nonce */
+    return memcmp(tag, p + LUAENC_NONCE_LEN, LUAENC_TAG_LEN) == 0;
 }
 
 unsigned char *luaEnc_decrypt(const unsigned char *in, size_t n, size_t *outn) {
     if (!luaEnc_isEncrypted(in, n)) return NULL;
-    if (in[5] != 0x01) return NULL;                 /* 版本 */
-    const unsigned char *nonce = in + 6;
+    const unsigned char *nonce = in;                /* nonce(8) | tag(8) | ct */
     const unsigned char *ct = in + LUAENC_HEADER_LEN;
     size_t ctlen = n - LUAENC_HEADER_LEN;
 
@@ -153,9 +170,8 @@ static unsigned char *enc(const unsigned char *pt, size_t n,
                           const unsigned char nonce[LUAENC_NONCE_LEN], size_t *outn) {
     size_t total = LUAENC_HEADER_LEN + n;
     unsigned char *out = (unsigned char *)malloc(total ? total : 1);
-    memcpy(out, LUAENC_MAGIC, 5);
-    out[5] = 0x01;
-    memcpy(out + 6, nonce, LUAENC_NONCE_LEN);
+    memcpy(out, nonce, LUAENC_NONCE_LEN);
+    compute_tag(nonce, out + LUAENC_NONCE_LEN);
     unsigned char ks[32];
     for (size_t i = 0; i < n; ++i) {
         if ((i & 31) == 0) keystream_block(nonce, (uint64_t)(i >> 5), ks);
