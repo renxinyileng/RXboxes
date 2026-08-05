@@ -12,10 +12,11 @@ Lua 脚本打包加密器。与设备端 androlua/src/main/jni/lua/luaenc.c 同�
 """
 import hashlib, os, re, struct, sys, zipfile, pathlib
 
-MAGIC = b"\x1bLENC"
-VERSION = 1
-HEADER_LEN = 14
+# 无明文魔数：头 = nonce(8) + tag(8)，tag = SHA256(KEY||nonce)[:8]。
+# 没有 KEY 就算不出 tag，所以文件头对外看是随机字节、grep 不到签名。
 NONCE_LEN = 8
+TAG_LEN = 8
+HEADER_LEN = 16
 
 _HERE = pathlib.Path(__file__).resolve().parent
 _LUAENC_C = _HERE.parent.parent / "androlua/src/main/jni/lua/luaenc.c"
@@ -37,6 +38,11 @@ def _keystream_block(key, nonce, j):
     return hashlib.sha256(key + nonce + struct.pack("<Q", j)).digest()
 
 
+def _tag(key, nonce):
+    # SHA256(KEY||nonce)[:8]；与密钥流输入长度不同，天然不撞
+    return hashlib.sha256(key + nonce).digest()[:TAG_LEN]
+
+
 def _xor_ctr(key, nonce, data):
     out = bytearray(len(data))
     ks = b""
@@ -47,24 +53,25 @@ def _xor_ctr(key, nonce, data):
     return bytes(out)
 
 
-def is_encrypted(data):
-    return len(data) >= HEADER_LEN and data[:5] == MAGIC
+def is_encrypted(data, key=None):
+    # 判据 = tag 校验。没有 key 无法判定（对外即"看不出"），此时保守返回 False
+    if key is None or len(data) < HEADER_LEN:
+        return False
+    return _tag(key, data[:NONCE_LEN]) == data[NONCE_LEN:HEADER_LEN]
 
 
 def encrypt(data, key, nonce=None):
-    if is_encrypted(data):          # 幂等：已加密的原样返回
+    if is_encrypted(data, key):     # 幂等：已加密的原样返回
         return data
     if nonce is None:
         nonce = os.urandom(NONCE_LEN)
-    return MAGIC + bytes([VERSION]) + nonce + _xor_ctr(key, nonce, data)
+    return nonce + _tag(key, nonce) + _xor_ctr(key, nonce, data)
 
 
 def decrypt(data, key):
-    if not is_encrypted(data):
+    if not is_encrypted(data, key):
         return data
-    if data[5] != VERSION:
-        raise ValueError("版本不符")
-    nonce = data[6:14]
+    nonce = data[:NONCE_LEN]
     return _xor_ctr(key, nonce, data[HEADER_LEN:])
 
 
@@ -75,7 +82,7 @@ def enc_apk(src, dst, key):
          zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
         for item in zin.infolist():
             data = zin.read(item.filename)
-            if item.filename.endswith(".lua") and not is_encrypted(data):
+            if item.filename.endswith(".lua") and not is_encrypted(data, key):
                 data = encrypt(data, key)
                 n += 1
             # 保留原压缩方式：STORED 的（如已对齐的 so）不要改成 DEFLATED
@@ -95,12 +102,12 @@ def verify_apk(apk, key):
                 continue
             total += 1
             data = z.read(name)
-            if not is_encrypted(data):
+            if not is_encrypted(data, key):
                 raise SystemExit(f"::error::{name} 在 APK 里仍是明文（未加密）")
-            # 解回来必须非空且不再带魔数（即确实是原始脚本）
+            # 解回来的明文不应再通过 tag 校验（即确实是原始脚本，非重复加密）
             pt = decrypt(data, key)
-            if is_encrypted(pt):
-                raise SystemExit(f"::error::{name} 解密后仍带魔数（重复加密？）")
+            if is_encrypted(pt, key):
+                raise SystemExit(f"::error::{name} 解密后仍像密文（重复加密？）")
     if total == 0:
         raise SystemExit("::error::APK 里一个 .lua 都没有，加密步骤可能没生效")
     print(f"校验通过：APK 内 {total} 个 .lua 全部为密文且可解密")
@@ -113,7 +120,7 @@ def selftest(key):
     for size in (0, 1, 31, 32, 33, 100, 4096, 100000):
         pt = bytes(random.getrandbits(8) for _ in range(size))
         ct = encrypt(pt, key)
-        assert is_encrypted(ct) or size < 0, "缺魔数"
+        assert is_encrypted(ct, key), "tag 校验失败"
         assert decrypt(ct, key) == pt, f"round-trip 失败 size={size}"
         # 幂等
         assert encrypt(ct, key) == ct, "重复加密不幂等"
