@@ -31,6 +31,10 @@ hook `luaL_loadbufferx` 在解密后的那一刻 dump 内存明文。
   `lopcodes.h`/`ljumptab.h`/`lopnames.h`/`lopcodes.c` 由
   `python3 native/luaenc/gen_opcodes.py [--seed N]` 一次性同步生成
   （内含一致性断言，改种子 = 换一套映射，与旧字节码不兼容）。
+- **重排约束**：`lcode.c` 的 `binopr2op`/`unopr2op` 用「枚举差值」推导
+  opcode（`opr - baser + base`），以下原子组必须保持官方相对顺序连续，
+  生成器按「组间洗牌、组内不动」处理（勿手工打散）：
+  `ADD..SHR`、`ADDK..BXORK`、`UNM..LEN`、`LT/LE`、`LTI/LEI`、`GTI/GEI`。
 - iABC 的 B/C 字段位置交换（`lopcodes.h` 的 `POS_B`/`POS_C` 宏）作位域盐，
   所有 `GETARG_*`/`SETARG_*`/`CREATE_*` 宏跟随，编译期自动一致、运行期零开销。
 - 效果：`unluac`/`luadec` 按标准格式硬解码全部错位；配合阶段 A 的 strip，

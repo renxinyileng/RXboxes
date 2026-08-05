@@ -3,7 +3,8 @@
  *
  * 检测手段:
  *   - maps 扫描:遍历 /proc/self/maps 找 "frida" 特征(frida-agent/gadget)
- *   - 线程名扫描:/proc/self/task/*/comm 找 gum-js-loop / pool-frida / frida
+ *   - 线程名扫描:遍历 /proc/self/task 下每个线程的 comm 文件,
+ *     找 gum-js-loop / pool-frida / frida 特征
  *   - 端口探测:127.0.0.1:27042(frida-server 默认端口)connect + D-Bus AUTH
  *     握手,响应为 D-Bus 风格(REJECTED/OK/DATA/ERROR)即命中
  *   - TracerPid:/proc/self/status 的 TracerPid 非 0
@@ -92,7 +93,7 @@ static int scan_maps(void) {
     return 0;
 }
 
-/* 扫描 /proc/self/task/*/comm 找 Frida 特征线程名 */
+/* 扫描 /proc/self/task 下各线程 comm 文件找 Frida 特征线程名 */
 static int scan_threads(void) {
     DIR *d = opendir("/proc/self/task");
     struct dirent *e;

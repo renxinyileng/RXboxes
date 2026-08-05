@@ -40,6 +40,29 @@ CANONICAL = [
 ]
 assert len(CANONICAL) == 83 and CANONICAL[-1] == "EXTRAARG"
 
+# 语义推导组:lcode.c 的 binopr2op/unopr2op 用「枚举差值」推导 opcode
+# (opr - baser + base),依赖以下各组的官方相对顺序与连续性,重排时
+# 必须整组原子移动、组内顺序不可变:
+#   binopr2op(opr, OPR_ADD, OP_ADD)   -> ADD..SHR
+#   binopr2op(opr, OPR_ADD, OP_ADDK)  -> ADDK..BXORK
+#   binopr2op(opr, OPR_LT,  OP_LT)    -> LT, LE
+#   binopr2op(opr, OPR_LT,  OP_LTI)   -> LTI, LEI
+#   binopr2op(opr, OPR_LT,  OP_GTI)   -> GTI, GEI
+#   unopr2op(opr)                     -> UNM, BNOT, NOT, LEN
+ATOMIC_GROUPS = [
+    ["ADDK", "SUBK", "MULK", "MODK", "POWK", "DIVK", "IDIVK",
+     "BANDK", "BORK", "BXORK"],
+    ["ADD", "SUB", "MUL", "MOD", "POW", "DIV", "IDIV",
+     "BAND", "BOR", "BXOR", "SHL", "SHR"],
+    ["UNM", "BNOT", "NOT", "LEN"],
+    ["LT", "LE"],
+    ["LTI", "LEI"],
+    ["GTI", "GEI"],
+]
+_GROUP_MEMBERS = {n for g in ATOMIC_GROUPS for n in g}
+assert len(_GROUP_MEMBERS) == 32, "原子组共 32 个 opcode"
+# 组间可交换、组内保持官方顺序
+
 
 def rewrite(path, text):
     (JNI / path).write_text(text, encoding="utf-8")
@@ -77,8 +100,21 @@ def main():
 
     order = CANONICAL[:-1]
     rng = random.Random(args.seed)
-    rng.shuffle(order)
+    # 原子组整体参与洗牌,组内保持官方顺序(见 ATOMIC_GROUPS 注释);
+    # 其余 opcode 单例洗牌。
+    units = []
+    for g in ATOMIC_GROUPS:
+        units.append(list(g))
+    for name in order:
+        if name not in _GROUP_MEMBERS:
+            units.append([name])
+    rng.shuffle(units)
+    order = [n for u in units for n in u]
     order = order + ["EXTRAARG"]
+    # 断言:原子组内部相对顺序未被破坏
+    for g in ATOMIC_GROUPS:
+        pos = [order.index(n) for n in g]
+        assert pos == sorted(pos), f"原子组 {g} 顺序被破坏"
 
     # ---- lopcodes.h:仅替换 typedef enum 块 ----
     txt, en, enum_lines = parse_enum()
