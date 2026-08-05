@@ -26,6 +26,8 @@
 
 #include "lauxlib.h"
 
+#include "luaenc.h"
+
 
 #if !defined(MAX_SIZET)
 /* maximum value for size_t */
@@ -794,6 +796,24 @@ static int skipcomment (FILE *f, int *cp) {
 }
 
 
+/* 内存读取器（原来定义在 luaL_loadbufferx 附近）。这里上移，供 luaL_loadfilex
+ * 的解密分支从内存加载明文使用。 */
+typedef struct LoadS {
+  const char *s;
+  size_t size;
+} LoadS;
+
+
+static const char *getS (lua_State *L, void *ud, size_t *size) {
+  LoadS *ls = (LoadS *)ud;
+  (void)L;  /* not used */
+  if (ls->size == 0) return NULL;
+  *size = ls->size;
+  ls->size = 0;
+  return ls->s;
+}
+
+
 LUALIB_API int luaL_loadfilex (lua_State *L, const char *filename,
                                              const char *mode) {
   LoadF lf;
@@ -809,6 +829,41 @@ LUALIB_API int luaL_loadfilex (lua_State *L, const char *filename,
     errno = 0;
     lf.f = fopen(filename, "r");
     if (lf.f == NULL) return errfile(L, "open", fnameindex);
+  }
+  /* 加密脚本走这里透明解密。所有落盘脚本（doFile 的 LloadFile、require 走
+   * package.path、dofile/loadfile）最终都过 luaL_loadfilex，所以这一个点就
+   * 兜住了文件加载路径。只在带魔数时改道，普通/字节码文件走下面原逻辑不变。 */
+  if (filename != NULL) {
+    unsigned char hdr[14];
+    size_t got = fread(hdr, 1, sizeof(hdr), lf.f);
+    if (luaEnc_isEncrypted(hdr, got)) {
+      /* 读整包 -> 解密 -> 从内存解析 */
+      long fsz;
+      if (fseek(lf.f, 0, SEEK_END) != 0 || (fsz = ftell(lf.f)) < 0) {
+        fclose(lf.f); return errfile(L, "read", fnameindex);
+      }
+      rewind(lf.f);
+      unsigned char *raw = (unsigned char *)malloc((size_t)fsz ? (size_t)fsz : 1);
+      if (raw == NULL) { fclose(lf.f); return errfile(L, "read", fnameindex); }
+      size_t rn = fread(raw, 1, (size_t)fsz, lf.f);
+      int ferr = ferror(lf.f);
+      fclose(lf.f);
+      if (ferr) { free(raw); return errfile(L, "read", fnameindex); }
+      size_t plen = 0;
+      unsigned char *plain = luaEnc_decrypt(raw, rn, &plen);
+      free(raw);
+      if (plain == NULL) {
+        lua_settop(L, fnameindex);
+        lua_pushfstring(L, "cannot decrypt %s", filename);
+        return LUA_ERRSYNTAX;
+      }
+      LoadS ls; ls.s = (const char *)plain; ls.size = plen;
+      status = lua_load(L, getS, &ls, lua_tostring(L, -1), mode);
+      free(plain);
+      lua_remove(L, fnameindex);
+      return status;
+    }
+    rewind(lf.f);  /* 非加密：回到文件头，交给下面的原逻辑 */
   }
   lf.n = 0;
   if (skipcomment(lf.f, &c))  /* read initial portion */
@@ -837,25 +892,23 @@ LUALIB_API int luaL_loadfilex (lua_State *L, const char *filename,
 }
 
 
-typedef struct LoadS {
-  const char *s;
-  size_t size;
-} LoadS;
-
-
-static const char *getS (lua_State *L, void *ud, size_t *size) {
-  LoadS *ls = (LoadS *)ud;
-  (void)L;  /* not used */
-  if (ls->size == 0) return NULL;
-  *size = ls->size;
-  ls->size = 0;
-  return ls->s;
-}
-
-
 LUALIB_API int luaL_loadbufferx (lua_State *L, const char *buff, size_t size,
                                  const char *name, const char *mode) {
   LoadS ls;
+  /* 加密内容（带 LENC 魔数头）在这里透明解密后再解析，明文只在内存里存在。
+   * 覆盖 LloadBuffer 路径 —— 比如 Welcome 用 readAsset+LloadBuffer 加载
+   * update.lua。解出来的明文不带魔数，递归回来不会再次进入本分支。 */
+  if (luaEnc_isEncrypted((const unsigned char *)buff, size)) {
+    size_t plen = 0;
+    unsigned char *plain = luaEnc_decrypt((const unsigned char *)buff, size, &plen);
+    if (plain == NULL) {
+      lua_pushfstring(L, "cannot decrypt %s", name ? name : "?");
+      return LUA_ERRSYNTAX;
+    }
+    int st = luaL_loadbufferx(L, (const char *)plain, plen, name, mode);
+    free(plain);
+    return st;
+  }
   ls.s = buff;
   ls.size = size;
   return lua_load(L, getS, &ls, name, mode);
