@@ -20,4 +20,11 @@ int luaEnc_isEncrypted(const unsigned char *p, size_t n);
  * 失败（头不合法/长度不够/内存不足）返回 NULL。 */
 unsigned char *luaEnc_decrypt(const unsigned char *in, size_t n, size_t *outn);
 
+/* 字节码常量池载荷盐（8 字节循环掩码）。ldump.c 写时异或、
+ * lundump.c 读时还原，两端必须用同一张表；仅防直接阅读，非密码学。 */
+const unsigned char *luaEnc_constMask(void);
+
+/* 内存擦除（volatile 写，防编译器优化掉），用于解密缓冲用完即清 */
+void luaEnc_wipe(void *p, size_t n);
+
 #endif /* LUAENC_H */

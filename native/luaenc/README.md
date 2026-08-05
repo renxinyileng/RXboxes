@@ -8,17 +8,34 @@
 反汇编 `libluajava.so` 仍能取到密钥、进而解出全部脚本；即便不取密钥，也能
 hook `luaL_loadbufferx` 在解密后的那一刻 dump 内存明文。
 
-目标是把门槛从**「`unzip` 就能读源码」**抬到**「要会脱壳 + 逆向 native」**，
-挡住绝大多数人。想要更强只能靠服务端下发 + 远程鉴权，那是另一套工程。
+目标是把门槛从**「`unzip` 就能读源码」**抬到**「要会脱壳 + 逆向 native +
+对抗反注入检测」**，挡住绝大多数人。想要更强只能靠服务端下发 + 远程鉴权，
+那是另一套工程。
 
 ## 组成
 
 | 文件 | 作用 |
 |---|---|
-| `androlua/src/main/jni/lua/luaenc.c` / `.h` | 设备端解密。含内置 SHA-256、**唯一真源的密钥**、CTR-XOR 解密 |
-| `androlua/src/main/jni/lua/lauxlib.c`（改动） | 在 `luaL_loadfilex` / `luaL_loadbufferx` 里挂解密钩子 |
-| `native/luaenc/pack.py` | 打包端加密器，密钥直接从 `luaenc.c` 解析，两端不漂移 |
-| `.github/workflows/android.yml`（改动） | 签名前把 APK 内 `.lua` 全部改写成密文并校验 |
+| `androlua/src/main/jni/lua/luaenc.c` / `.h` | 设备端解密。含内置 SHA-256、**唯一真源的密钥（三表拆分）**、CTR-XOR 解密、常量池载荷盐、解密入口自校验 |
+| `androlua/src/main/jni/lua/luaanti.c` / `.h` | 反 Frida / 反调试：maps 扫描、线程名、27042 D-Bus 握手、TracerPid（全 syscall 直读），命中即延迟自毁 |
+| `androlua/src/main/jni/lua/ldump.c` / `lundump.c`（改动） | 字节码常量池载荷加密（字符串/数值 XOR 盐），两端对称 |
+| `androlua/src/main/jni/lua/lauxlib.c`（改动） | 在 `luaL_loadfilex` / `luaL_loadbufferx` 里挂解密钩子 + 反注入检测 + 明文用完即擦 |
+| `androlua/src/main/jni/lua/lopcodes.h` 等 4 文件（改动） | **定制 VM**：83 个 opcode 重排 + iABC 的 B/C 位域交换（见下） |
+| `native/luaenc/gen_opcodes.py` | 定制 VM opcode 表生成器（固定种子可复现，换种子 = 换一套映射） |
+| `native/luaenc/pack.py` | 打包端加密器，密钥直接从 `luaenc.c` 三表解析，两端不漂移；支持 `--lua` strip 编译 |
+| `.github/workflows/android.yml`（改动） | 构建 host lua → strip 编译 → 签名前把 APK 内 `.lua` 全部改写成密文并校验 |
+
+## 定制 VM（opcode 重排 + 位域盐）
+
+- 83 个 opcode 按固定种子（`20260805`）重排，`OP_EXTRAARG` 保持末位；
+  `lopcodes.h`/`ljumptab.h`/`lopnames.h`/`lopcodes.c` 由
+  `python3 native/luaenc/gen_opcodes.py [--seed N]` 一次性同步生成
+  （内含一致性断言，改种子 = 换一套映射，与旧字节码不兼容）。
+- iABC 的 B/C 字段位置交换（`lopcodes.h` 的 `POS_B`/`POS_C` 宏）作位域盐，
+  所有 `GETARG_*`/`SETARG_*`/`CREATE_*` 宏跟随，编译期自动一致、运行期零开销。
+- 效果：`unluac`/`luadec` 按标准格式硬解码全部错位；配合阶段 A 的 strip，
+  反编译回到"行为分析"级别。注意纯重排可被对照/统计方法恢复（见
+  `ulua` 等工具），这是拖延层不是防线。
 
 ## 密文格式（无明文魔数）
 
@@ -44,6 +61,41 @@ tag 校验的概率约 2^-64，可忽略，不会把明文误判成密文。
 > newActivity 名称解析（硬编码 `.lua`）以及 Welcome 对 main.lua/init.lua 的
 > 特判，回归面大而收益低（本就是明显的 AndroLua 应用），故未动。
 
+## 密钥（三表拆分，防静态提取）
+
+32 字节密钥不再以完整形态出现在 `.so` 里，而是拆成三张表
+（`luaenc.c` 的 `LUAENC_KEY_BEGIN`/`END` 之间，唯一真源）：
+
+```
+SEGS[32] 乱序字节 + MASK[32] 异或掩码 + MAP[32] 位置映射（置换）
+key[i] = SEGS[MAP[i]] ^ MASK[MAP[i]]   （运行时 luaEnc_getKey 重组）
+```
+
+`pack.py` 解析三表重建密钥（并校验 MAP 是置换），两端永不漂移。
+换密钥 = 用相同逻辑重新生成三表（参考 git 历史中的生成方式）。
+
+## 常量池载荷盐
+
+`string.dump`/`luac -s` 产出的字节码里，字符串与数值常量载荷在
+`ldump.c` 写入时被 8 字节循环掩码异或（`luaEnc_constMask()`，唯一真源），
+`lundump.c` 读取时对称还原。配合定制 VM，静态阅读/工具化反编译进一步受阻。
+仅防直接阅读，非密码学。
+
+## 反注入 / 反调试（luaanti.c）
+
+解密钩子在命中密文时调用 `luaAnti_check()`，四路检测（全 syscall 直读，
+绕过 libc hook）：
+
+- `/proc/self/maps` 找 `frida` 特征（frida-agent/gadget）
+- `/proc/self/task/*/comm` 找 `gum-js`/`pool-frida` 线程名
+- `127.0.0.1:27042` connect + D-Bus AUTH 握手（REJECTED/OK/DATA/ERROR）
+- `/proc/self/status` 的 `TracerPid` 非 0
+
+命中即**延迟自毁**（随机 1-5 秒后 abort，增加检测点被定位难度）；检测结果
+3 秒节流缓存。此外 `luaEnc_decrypt` 入口自校验（首调快照 + 每次比对），
+入口被 inline hook 改写即拒绝解密。均为拖延层：Frida 改名/换端口/重编译
+可绕过，2025 年起 KPM（内核级）可屏蔽 TracerPid 读取。
+
 ## 为什么钩这两个函数就够
 
 所有落盘脚本的加载最终都经过 Lua 核心这两个函数，一处兜住全部：
@@ -67,19 +119,40 @@ tag 校验的概率约 2^-64，可忽略，不会把明文误判成密文。
 一个 finalize `mergeReleaseAssets` 的 task 调用 `pack.py`（未做，因无法离线
 验证 AGP 集成，留作后续）。
 
+## 阶段 A：strip 编译（unluac 失效）
+
+CI 在加密前先用**与设备同一份源码**（含定制 VM 重排与常量盐）编译 host
+lua，再对每个 `.lua` 执行 `string.dump(f, true)`（等价 `luac -s`）生成
+**剥离调试信息**的字节码，之后才加密。`unluac` 依赖调试信息，strip 后直接
+失效；`luadec` 不支持 5.4。host lua 构建：
+
+```bash
+make -C androlua/src/main/jni/lua all MYCFLAGS="-std=c99 -DLUA_USE_LINUX" MYLIBS="-ldl"
+```
+
+本地复现：`python3 native/luaenc/pack.py enc-apk in.apk out.apk --lua androlua/src/main/jni/lua/lua`
+
 ## 自测
 
 ```bash
 python3 native/luaenc/pack.py selftest            # 加解密 round-trip
+python3 native/luaenc/gen_opcodes.py              # 定制 VM 表重排（幂等，可复现）
 # 交叉验证 python 加密 ↔ C 解密：
 gcc -DLUAENC_TEST_MAIN -O2 -o /tmp/luaenc native/../androlua/src/main/jni/lua/luaenc.c
 python3 native/luaenc/pack.py enc-file X.lua /tmp/e.bin && /tmp/luaenc dec </tmp/e.bin | diff - X.lua
+# host lua 完整链路（CI 同款）：构建 → strip 编译 → 加密 → 校验
+make -C androlua/src/main/jni/lua all MYCFLAGS="-std=c99 -DLUA_USE_LINUX" MYLIBS="-ldl"
+python3 native/luaenc/pack.py enc-apk app.apk app-enc.apk --lua androlua/src/main/jni/lua/lua
+python3 native/luaenc/pack.py verify-apk app-enc.apk
 ```
 
-## 换密钥
+## 换密钥 / 换 opcode 映射
 
-只改 `luaenc.c` 里 `LUAENC_KEY_BEGIN`/`END` 之间那 32 字节；`pack.py` 会自动
-读到新值。改后必须重编 `libluajava.so` 并重新出包，旧包与新密钥不兼容。
+- **换密钥**：重新生成 `luaenc.c` 的 `LUAENC_KEY_SEGS/MASK/MAP` 三张表
+  （保证 `key[i] = SEGS[MAP[i]] ^ MASK[MAP[i]]` 成立即可）；`pack.py` 自动
+  读到新值。改后必须重编 `libluajava.so` 并重新出包，旧包与新密钥不兼容。
+- **换 opcode 映射**：`python3 native/luaenc/gen_opcodes.py --seed N` 换种子
+  重排；同样必须重编 so 并出包。同版本发布即可，无历史兼容包袱。
 
 ## 如何加固（可选，按需）
 
