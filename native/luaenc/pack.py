@@ -76,7 +76,12 @@ def decrypt(data, key):
 
 
 def enc_apk(src, dst, key):
-    """把 APK 内每个 *.lua 条目替换成密文，其余条目原样复制。返回改写条数。"""
+    """把 APK 内每个 *.lua 条目替换成密文，其余条目原样复制。返回改写条数。
+
+    安全护栏：若 APK 已带 v2/v3 签名块（"APK Sig Block 42"），改写会破坏签名，
+    直接拒绝。所以本步必须在签名之前跑（CI 里就是签名前）。"""
+    if b"APK Sig Block 42" in pathlib.Path(src).read_bytes():
+        raise SystemExit(f"::error::{src} 已签名，加密会破坏签名——请在签名前加密")
     n = 0
     with zipfile.ZipFile(src, "r") as zin, \
          zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:

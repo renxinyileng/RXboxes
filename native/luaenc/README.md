@@ -55,17 +55,24 @@ tag 校验的概率约 2^-64，可忽略，不会把明文误判成密文。
 只在检测到魔数头时改道解密；普通脚本、字节码文件走原逻辑不变（向后兼容，
 未加密的包也能跑）。解出来的明文不带魔数，递归回来不会二次解密。
 
-## 为什么放在 CI 签名前，而不是 Gradle 里
+## 在哪一步加密
 
-`.lua` 源码始终以**明文**留在仓库(可读、可改、可 diff)；加密只发生在打包
-管线。放在 CI 签名步骤前对最终 APK 的 zip 条目改写，好处是**与 AGP 版本
-无关**、只动 `.lua` 条目、`.so`/manifest/resources 逐字节原样，改完再
-`zipalign` + 签名。
+`.lua` 源码始终以**明文**留在仓库(可读、可改、可 diff)；加密只发生在打包时，
+对最终 APK 的 zip 条目改写——**与 AGP 版本无关**、只动 `.lua` 条目、
+`.so`/manifest/resources 逐字节原样。选 APK 层而非 sourceSet 层，是因为构建
+app 时 AGP 会把 androlua 模块的 `resources/lua` 也并进 APK，只有在 APK 层
+改写才能把各模块的 `.lua` 一网打尽。
 
-**注意**：本地 `./gradlew assembleRelease` 不经过这一步，产物里的 `.lua`
-是明文。对外分发一律走 CI 产物。若要本地也加密，可在 `app/build.gradle` 注册
-一个 finalize `mergeReleaseAssets` 的 task 调用 `pack.py`（未做，因无法离线
-验证 AGP 集成，留作后续）。
+两处都会加密，互为双保险（`pack.py` 幂等，先跑到的那次生效，另一次空操作）：
+
+1. **本地 `./gradlew assembleRelease`** —— `app/build.gradle` 注册的
+   `encryptReleaseLua` 作为 `assembleRelease` 的 finalizer，对产出的**未签名**
+   release APK 跑 `pack.py enc-apk`。缺 python3 只告警不失败；APK 若已签名则
+   跳过（改写会破坏签名，`pack.py` 直接拒绝）。正常本地流程：出未签名包→
+   自动加密→再签名。debug 包不加密（保留可调试）。
+2. **CI** —— 在签名前额外跑一遍 `enc-apk` + `verify-apk`。因为 gradle 那步
+   已经加密，这里通常是空操作，但 `verify-apk` 会硬断言 APK 内每个 `.lua`
+   都是密文，是最终防线。
 
 ## 自测
 
