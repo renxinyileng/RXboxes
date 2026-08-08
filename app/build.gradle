@@ -123,7 +123,10 @@ tasks.register("encryptReleaseLua") {
         if (apks.isEmpty()) { logger.warn("luaenc: release 目录下没有 apk，跳过"); return }
         apks.each { apk ->
             def tmp = new File(apk.parentFile, apk.name + ".enc.tmp")
-            def result = exec {
+            // doLast 闭包的 delegate 是 Task，没有 exec()；显式用 project.exec。
+            // 本工程未开 configuration-cache（只开了 build cache），可安全在
+            // 执行期访问 project。
+            def result = project.exec {
                 commandLine "python3", packPy.absolutePath, "enc-apk", apk.absolutePath, tmp.absolutePath
                 ignoreExitValue = true
             }
