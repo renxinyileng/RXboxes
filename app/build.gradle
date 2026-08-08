@@ -105,6 +105,9 @@ dependencies {
 // 选在 APK 层做而不是 sourceSet 层：构建 app 时 AGP 会把 androlua 模块的
 // resources/lua 也并进最终 APK，只有在 APK 层改写才能把各模块的 .lua 一网打尽。
 //
+// Gradle 9 已移除 Project.exec / Task.exec，命令行只能走注入的 ExecOperations，
+// 所以这里用带 @Inject 的自定义任务类型，而不是 tasks.register{ doLast{ exec{} } }。
+//
 // 安全性：
 //   - pack.py 幂等（已加密的按 tag 认出、跳过），CI 里签名前还有一道 enc-apk +
 //     verify-apk，本 task 先跑到只是让那一步变成空操作，双保险不冲突。
@@ -112,23 +115,25 @@ dependencies {
 //     未签名的 release 产物；本地若配了 signingConfig 签了名，这里会跳过并告警，
 //     绝不损坏已签名包。正常本地流程是产未签名包→加密→再签名，与 CI 一致。
 //   - 缺 python3 时只告警、不失败（本地照常出包，只是没加密；CI 有 python3）。
-tasks.register("encryptReleaseLua") {
-    description = "把 release APK 内的 .lua 改写成密文（本地打包自动加密）"
-    doLast {
-        def packPy = file("${rootProject.projectDir}/native/luaenc/pack.py")
-        def apkDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
+abstract class EncryptReleaseLuaTask extends DefaultTask {
+    @javax.inject.Inject abstract org.gradle.process.ExecOperations getExecOps()
+
+    @Internal abstract Property<String> getPackPyPath()
+    @Internal abstract Property<String> getApkDirPath()
+
+    @TaskAction
+    void run() {
+        def packPy = new File(packPyPath.get())
+        def apkDir = new File(apkDirPath.get())
         if (!packPy.exists()) { logger.warn("luaenc: 找不到 ${packPy}，跳过"); return }
         if (!apkDir.exists()) { logger.warn("luaenc: 找不到 ${apkDir}，跳过"); return }
         def apks = apkDir.listFiles()?.findAll { it.name.endsWith(".apk") } ?: []
         if (apks.isEmpty()) { logger.warn("luaenc: release 目录下没有 apk，跳过"); return }
         apks.each { apk ->
             def tmp = new File(apk.parentFile, apk.name + ".enc.tmp")
-            // doLast 闭包的 delegate 是 Task，没有 exec()；显式用 project.exec。
-            // 本工程未开 configuration-cache（只开了 build cache），可安全在
-            // 执行期访问 project。
-            def result = project.exec {
-                commandLine "python3", packPy.absolutePath, "enc-apk", apk.absolutePath, tmp.absolutePath
-                ignoreExitValue = true
+            def result = execOps.exec { spec ->
+                spec.commandLine "python3", packPy.absolutePath, "enc-apk", apk.absolutePath, tmp.absolutePath
+                spec.ignoreExitValue = true
             }
             if (result.exitValue == 0 && tmp.exists()) {
                 apk.delete(); tmp.renameTo(apk)
@@ -139,5 +144,10 @@ tasks.register("encryptReleaseLua") {
             }
         }
     }
+}
+tasks.register("encryptReleaseLua", EncryptReleaseLuaTask) {
+    description = "把 release APK 内的 .lua 改写成密文（本地打包自动加密）"
+    packPyPath.set("${rootProject.projectDir}/native/luaenc/pack.py".toString())
+    apkDirPath.set(layout.buildDirectory.dir("outputs/apk/release").get().asFile.absolutePath)
 }
 tasks.matching { it.name == "assembleRelease" }.configureEach { finalizedBy("encryptReleaseLua") }
