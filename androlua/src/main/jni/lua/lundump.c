@@ -22,6 +22,7 @@
 #include "lobject.h"
 #include "lstring.h"
 #include "lundump.h"
+#include "luaenc.h"
 #include "lzio.h"
 
 
@@ -92,14 +93,25 @@ static int loadInt (LoadState *S) {
 
 static lua_Number loadNumber (LoadState *S) {
   lua_Number x;
+  const unsigned char *m = luaEnc_constMask();
+  unsigned char *p;
+  int i;
   loadVar(S, x);
+  /* 常量盐：与 ldump.c dumpNumber 对称还原 */
+  p = (unsigned char *)&x;
+  for (i = 0; i < (int)sizeof(x); i++) p[i] ^= m[i & 7];
   return x;
 }
 
 
 static lua_Integer loadInteger (LoadState *S) {
   lua_Integer x;
+  const unsigned char *m = luaEnc_constMask();
+  unsigned char *p;
+  int i;
   loadVar(S, x);
+  p = (unsigned char *)&x;
+  for (i = 0; i < (int)sizeof(x); i++) p[i] ^= m[i & 7];
   return x;
 }
 
@@ -115,7 +127,11 @@ static TString *loadStringN (LoadState *S, Proto *p) {
     return NULL;
   else if (--size <= LUAI_MAXSHORTLEN) {  /* short string? */
     char buff[LUAI_MAXSHORTLEN];
+    const unsigned char *m = luaEnc_constMask();
+    size_t i;
     loadVector(S, buff, size);  /* load string into buffer */
+    /* 常量盐：与 ldump.c dumpString 对称还原 */
+    for (i = 0; i < size; i++) buff[i] ^= (char)m[i & 7];
     ts = luaS_newlstr(L, buff, size);  /* create string */
   }
   else {  /* long string */
@@ -123,6 +139,12 @@ static TString *loadStringN (LoadState *S, Proto *p) {
     setsvalue2s(L, L->top.p, ts);  /* anchor it ('loadVector' can GC) */
     luaD_inctop(L);
     loadVector(S, getlngstr(ts), size);  /* load directly in final place */
+    {
+      const unsigned char *m = luaEnc_constMask();
+      unsigned char *p = (unsigned char *)getlngstr(ts);
+      size_t i;
+      for (i = 0; i < size; i++) p[i] ^= m[i & 7];
+    }
     L->top.p--;  /* pop string */
   }
   luaC_objbarrier(L, p, ts);

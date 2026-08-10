@@ -12,12 +12,14 @@
 
 #include <limits.h>
 #include <stddef.h>
+#include <stdlib.h>
 
 #include "lua.h"
 
 #include "lobject.h"
 #include "lstate.h"
 #include "lundump.h"
+#include "luaenc.h"
 
 
 typedef struct {
@@ -80,11 +82,20 @@ static void dumpInt (DumpState *D, int x) {
 
 
 static void dumpNumber (DumpState *D, lua_Number x) {
+  /* 常量盐：数值载荷逐字节异或，长度不变（lundump 对称还原） */
+  const unsigned char *m = luaEnc_constMask();
+  unsigned char *p = (unsigned char *)&x;
+  int i;
+  for (i = 0; i < (int)sizeof(x); i++) p[i] ^= m[i & 7];
   dumpVar(D, x);
 }
 
 
 static void dumpInteger (DumpState *D, lua_Integer x) {
+  const unsigned char *m = luaEnc_constMask();
+  unsigned char *p = (unsigned char *)&x;
+  int i;
+  for (i = 0; i < (int)sizeof(x); i++) p[i] ^= m[i & 7];
   dumpVar(D, x);
 }
 
@@ -95,8 +106,19 @@ static void dumpString (DumpState *D, const TString *s) {
   else {
     size_t size = tsslen(s);
     const char *str = getstr(s);
+    const unsigned char *m = luaEnc_constMask();
+    unsigned char *tmp;
+    size_t i;
     dumpSize(D, size + 1);
-    dumpVector(D, str, size);
+    /* 常量盐：字符串载荷逐字节异或，长度不变（lundump 对称还原） */
+    tmp = (unsigned char *)malloc(size ? size : 1);
+    if (tmp == NULL) {  /* 内存不足：标记失败，后续 dump 全部跳过 */
+      D->status = LUA_ERRMEM;
+      return;
+    }
+    for (i = 0; i < size; i++) tmp[i] = (unsigned char)str[i] ^ m[i & 7];
+    dumpVector(D, tmp, size);
+    free(tmp);
   }
 }
 
