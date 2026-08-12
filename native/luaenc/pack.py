@@ -161,14 +161,19 @@ def strip_compile(lua_exe, src, dst):
     (等价 luac -s)，供 enc-apk 在加密前调用。失败抛 SystemExit。"""
     # string.dump(f, true) 第二参数 true = strip；写出的字节码仍带 5.4 头，
     # 设备端 luaL_loadbufferx 解密后直接 undump（定制 VM 同源码，两端一致）
+    #
+    # 路径经环境变量传入，不走位置参数：`lua -e chunk A B` 里 A 会被当成
+    # 待执行的脚本文件（arg[0]=A、arg[1]=B），chunk 拿不到 src——用
+    # os.getenv 一次性绕开 -e 的 arg 语义，也顺带免掉路径含引号的转义问题。
     script = (
-        "local f=assert(loadfile(arg[1]))\n"
+        "local f=assert(loadfile(os.getenv('LUAENC_SRC')))\n"
         "local s=string.dump(f,true)\n"
-        "local h=assert(io.open(arg[2],'wb'))\n"
+        "local h=assert(io.open(os.getenv('LUAENC_DST'),'wb'))\n"
         "h:write(s)\nh:close()"
     )
-    r = subprocess.run([lua_exe, "-e", script, str(src), str(dst)],
-                       capture_output=True, text=True)
+    env = dict(os.environ, LUAENC_SRC=str(src), LUAENC_DST=str(dst))
+    r = subprocess.run([lua_exe, "-e", script],
+                       capture_output=True, text=True, env=env)
     if r.returncode != 0:
         raise SystemExit(
             f"::error::strip 编译失败 {src}: {r.stderr.strip()}")
