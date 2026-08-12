@@ -7,15 +7,16 @@
  *   tag[8]   = SHA256(KEY || nonce) 的前 8 字节 —— 既当"是不是本方案加密的"
  *              判据，又顺带校验密钥/完整性。没有 KEY 就算不出 tag，
  *              所以文件头看不出任何固定特征、也 grep 不到签名
- *   ct[...]  = 明文 XOR 密钥流
+ *   ct[...]  = 明文 XOR AES-256-CTR 密钥流
  *
- * 密钥流（CTR 模式，SHA-256 当 PRF）：
- *   block_j = SHA256( KEY(32) || nonce(8) || u64_le(j) )   j = 0,1,2,...
- *   明文[i] = 密文[i] XOR (block_{i/32})[i%32]
- * tag 用 SHA256(KEY||nonce)（40 字节输入），密钥流用 SHA256(KEY||nonce||ctr8)
- *（48 字节输入），输入长度不同 → tag 绝不会撞上任何密钥流块，天然域分离。
+ * 密钥流：AES-256-CTR。key = 拆分方案重组出的 32 字节；
+ *   block_j(16B) = AES256_encrypt(key, nonce(8) || u64_be(j))   j = 0,1,2,...
+ *   明文[i] = 密文[i] XOR (block_{i/16})[i%16]
+ * 与 pack.py 的 cryptography AES-CTR(iv = nonce || 0^8) 逐块一致（CTR 把 16
+ * 字节计数器当大端整数递增，低 8 字节从 0 起即 j，高 8 字节恒为 nonce）。
  *
- * 内置一份公有领域 SHA-256，避免依赖任何外部库，保证与 hashlib 逐位一致。
+ * tag 仍用 SHA-256(KEY||nonce)[:8] 作"是否本方案加密"的判据 + 密钥校验，
+ * 与密码算法无关。内置公有领域 SHA-256 与 AES-256，两端逐位对齐、无外部依赖。
  */
 #include "luaenc.h"
 
@@ -141,20 +142,95 @@ static void sha256_final(sha256_ctx *c, unsigned char *out) {
             out[i + k*4] = (unsigned char)((c->state[k] >> (24 - i*8)) & 0xff);
 }
 
-/* block_j = SHA256(KEY || nonce || u64_le(j)) */
-static void keystream_block(const unsigned char nonce[LUAENC_NONCE_LEN],
-                            uint64_t j, unsigned char out[32]) {
-    unsigned char ctr[8];
-    unsigned char key[32];
+/* ------------------------------- AES-256 ------------------------------- */
+/* 只实现前向分组加密（CTR 模式的密钥流只需要它）。FIPS-197，Nk=8, Nr=14。
+ * 该 so 没链 OpenSSL，故自带一份，与 pack.py 逐位对齐（有 KAT 兜底）。 */
+static const unsigned char AES_SBOX[256] = {
+  0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
+  0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
+  0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
+  0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
+  0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
+  0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
+  0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
+  0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
+  0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
+  0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
+  0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
+  0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
+  0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
+  0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
+  0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
+  0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16
+};
+
+static unsigned char aes_xtime(unsigned char x) {
+    return (unsigned char)((x << 1) ^ (((x >> 7) & 1) * 0x1b));
+}
+
+static void aes256_key_expansion(const unsigned char key[32], unsigned char rk[240]) {
+    unsigned char t[4], rcon = 1;
     int i;
-    for (i = 0; i < 8; ++i) ctr[i] = (unsigned char)((j >> (i * 8)) & 0xff);
+    memcpy(rk, key, 32);
+    for (i = 32; i < 240; i += 4) {
+        memcpy(t, rk + i - 4, 4);
+        if (i % 32 == 0) {
+            unsigned char tmp = t[0];
+            t[0] = AES_SBOX[t[1]] ^ rcon;
+            t[1] = AES_SBOX[t[2]];
+            t[2] = AES_SBOX[t[3]];
+            t[3] = AES_SBOX[tmp];
+            rcon = aes_xtime(rcon);
+        } else if (i % 32 == 16) {
+            t[0] = AES_SBOX[t[0]]; t[1] = AES_SBOX[t[1]];
+            t[2] = AES_SBOX[t[2]]; t[3] = AES_SBOX[t[3]];
+        }
+        rk[i]   = rk[i-32]   ^ t[0]; rk[i+1] = rk[i-31] ^ t[1];
+        rk[i+2] = rk[i-30] ^ t[2]; rk[i+3] = rk[i-29] ^ t[3];
+    }
+}
+
+/* 状态列主序：字节 (行 r, 列 c) = s[r + 4c] */
+static void aes256_encrypt_block(const unsigned char key[32],
+                                 const unsigned char in[16], unsigned char out[16]) {
+    unsigned char rk[240], s[16], t;
+    int round, k, c;
+    aes256_key_expansion(key, rk);
+    memcpy(s, in, 16);
+    for (k = 0; k < 16; ++k) s[k] ^= rk[k];
+    for (round = 1; round <= 14; ++round) {
+        for (k = 0; k < 16; ++k) s[k] = AES_SBOX[s[k]];
+        /* ShiftRows */
+        t=s[1];  s[1]=s[5];  s[5]=s[9];  s[9]=s[13]; s[13]=t;
+        t=s[2];  s[2]=s[10]; s[10]=t;    t=s[6];     s[6]=s[14]; s[14]=t;
+        t=s[15]; s[15]=s[11];s[11]=s[7]; s[7]=s[3];  s[3]=t;
+        if (round != 14) {
+            for (c = 0; c < 4; ++c) {
+                unsigned char *col = s + 4*c;
+                unsigned char a0=col[0],a1=col[1],a2=col[2],a3=col[3];
+                col[0]= aes_xtime(a0) ^ (aes_xtime(a1)^a1) ^ a2 ^ a3;
+                col[1]= a0 ^ aes_xtime(a1) ^ (aes_xtime(a2)^a2) ^ a3;
+                col[2]= a0 ^ a1 ^ aes_xtime(a2) ^ (aes_xtime(a3)^a3);
+                col[3]= (aes_xtime(a0)^a0) ^ a1 ^ a2 ^ aes_xtime(a3);
+            }
+        }
+        for (k = 0; k < 16; ++k) s[k] ^= rk[16*round + k];
+    }
+    memcpy(out, s, 16);
+    luaEnc_wipe(rk, sizeof(rk));
+}
+
+/* AES-256-CTR 密钥流块 j（16 字节）：AES_key( nonce(8) || u64_be(j) )。
+ * 与 pack.py 的 cryptography AES-CTR(iv = nonce || 0^8) 逐块一致：CTR 把
+ * 16 字节计数器当大端整数递增，低 8 字节从 0 起即 j，高 8 字节恒为 nonce。 */
+static void keystream_block(const unsigned char nonce[LUAENC_NONCE_LEN],
+                            uint64_t j, unsigned char out[16]) {
+    unsigned char key[32], ctr[16];
+    int k;
+    memcpy(ctr, nonce, LUAENC_NONCE_LEN);
+    for (k = 0; k < 8; ++k) ctr[8 + k] = (unsigned char)(j >> (56 - k * 8));
     luaEnc_getKey(key);
-    sha256_ctx c;
-    sha256_init(&c);
-    sha256_update(&c, key, sizeof(key));
-    sha256_update(&c, nonce, LUAENC_NONCE_LEN);
-    sha256_update(&c, ctr, sizeof(ctr));
-    sha256_final(&c, out);
+    aes256_encrypt_block(key, ctr, out);
     luaEnc_wipe(key, sizeof(key));
 }
 
@@ -216,10 +292,10 @@ unsigned char *luaEnc_decrypt(const unsigned char *in, size_t n, size_t *outn) {
     unsigned char *out = (unsigned char *)malloc(ctlen ? ctlen : 1);
     if (!out) return NULL;
 
-    unsigned char ks[32];
+    unsigned char ks[16];
     for (size_t i = 0; i < ctlen; ++i) {
-        if ((i & 31) == 0) keystream_block(nonce, (uint64_t)(i >> 5), ks);
-        out[i] = ct[i] ^ ks[i & 31];
+        if ((i & 15) == 0) keystream_block(nonce, (uint64_t)(i >> 4), ks);
+        out[i] = ct[i] ^ ks[i & 15];
     }
     if (outn) *outn = ctlen;
     return out;
@@ -235,10 +311,10 @@ static unsigned char *enc(const unsigned char *pt, size_t n,
     unsigned char *out = (unsigned char *)malloc(total ? total : 1);
     memcpy(out, nonce, LUAENC_NONCE_LEN);
     compute_tag(nonce, out + LUAENC_NONCE_LEN);
-    unsigned char ks[32];
+    unsigned char ks[16];
     for (size_t i = 0; i < n; ++i) {
-        if ((i & 31) == 0) keystream_block(nonce, (uint64_t)(i >> 5), ks);
-        out[LUAENC_HEADER_LEN + i] = pt[i] ^ ks[i & 31];
+        if ((i & 15) == 0) keystream_block(nonce, (uint64_t)(i >> 4), ks);
+        out[LUAENC_HEADER_LEN + i] = pt[i] ^ ks[i & 15];
     }
     *outn = total;
     return out;

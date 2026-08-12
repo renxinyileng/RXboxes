@@ -46,7 +46,7 @@ hook `luaL_loadbufferx` 在解密后的那一刻 dump 内存明文。
 ```
 nonce[8] = 每个文件随机（明文存放，让各文件密钥流互相独立）
 tag[8]   = SHA256(KEY || nonce) 前 8 字节
-ct[...]  = 明文 XOR 密钥流
+ct[...]  = 明文 XOR AES-256-CTR 密钥流
 ```
 
 **没有固定魔数**：整个头就是 nonce + tag，对没有 KEY 的人来说与随机字节
@@ -54,12 +54,15 @@ ct[...]  = 明文 XOR 密钥流
 「是不是本方案加密的」判据和密钥/完整性校验：读头 16 字节，用 nonce 重算
 SHA256(KEY||nonce)[:8] 与 tag 比对，命中才解密。
 
-密钥流（CTR 模式，SHA-256 当 PRF）：
-`block_j = SHA256(KEY(32) || nonce(8) || u64_le(j))`，`j = 0,1,2,…`
+密码算法 **AES-256-CTR**：`key` = 拆分方案（SEGS/MASK/MAP）重组出的 32 字节；
+`block_j(16B) = AES256(key, nonce(8) || u64_be(j))`，`j = 0,1,2,…`，明文逐 16
+字节与密钥流异或。设备端 `luaenc.c` 自带一份 AES-256（该 so 没链 OpenSSL），
+打包端 `pack.py` 用等价的纯 Python AES-256（不依赖 cryptography，避免其
+`_cffi_backend` 在部分环境缺失），两端过 FIPS-197 已知答案向量对齐、并有
+C↔Python round-trip 兜底。
 
-tag 输入是 `KEY||nonce`（40B），密钥流输入是 `KEY||nonce||ctr8`（48B），
-长度不同 → tag 绝不撞任何密钥流块，天然域分离。明文脚本首 16 字节恰好通过
-tag 校验的概率约 2^-64，可忽略，不会把明文误判成密文。
+tag 仍用 SHA-256(KEY||nonce)[:8]，只作检测/校验，与密码算法无关。明文脚本
+首 16 字节恰好通过 tag 校验的概率约 2^-64，可忽略，不会把明文误判成密文。
 
 > 注：`.lua` 后缀仍保留在 APK 内。改后缀会牵动 AndroLua 的 require/doFile/
 > newActivity 名称解析（硬编码 `.lua`）以及 Welcome 对 main.lua/init.lua 的
