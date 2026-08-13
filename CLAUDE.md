@@ -52,8 +52,10 @@ Java 只提供壳与 JNI 桥。两个 Gradle 模块：
 - 密码算法 **AES-256-CTR**：设备端 `luaenc.c` 自带一份 AES-256，打包端
   `pack.py` 用等价的**纯 Python** AES-256（**不要**引 `cryptography`——其
   `_cffi_backend` 在部分环境缺失）。两端过 FIPS-197 KAT + C↔Python round-trip 对齐。
-- **唯一真源的密钥**在 `luaenc.c`（三表拆分 SEGS/MASK/MAP），`pack.py` 直接
-  解析它，两端永不漂移。换密钥就重生成三表并重编 so。
+- **唯一真源的密钥**在 `luaenc.c`（**六表多级拆分** A/B/C/R/P/W：置换 + 异或掩码
+  + 加法掩码 + 位旋转 + CBC 式链式白化，破坏「两表异或即得」）。`pack.py` 直接
+  解析并按同款逻辑重组，两端永不漂移。换拆分/换密钥跑 `native/luaenc/gen_key.py`
+  （据密钥反解、绝不打印明文），改后必须重编 so。
 - 定制 VM（opcode 重排 + 位域盐）由 `native/luaenc/gen_opcodes.py` 生成；
   CI 用 host lua `string.dump(f,true)` strip 调试信息（unluac 失效）。
 - 反注入/反调试在 `luaanti.c`（Frida maps/线程名/27042/TracerPid，全 syscall 直读）。
