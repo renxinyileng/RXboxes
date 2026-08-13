@@ -24,9 +24,23 @@ _HERE = pathlib.Path(__file__).resolve().parent
 _LUAENC_C = _HERE.parent.parent / "androlua/src/main/jni/lua/luaenc.c"
 
 
+def _rotl8(x, n):
+    n &= 7
+    return ((x << n) | (x >> ((8 - n) & 7))) & 0xFF
+
+
 def load_key(path=_LUAENC_C):
-    """从 luaenc.c 的 LUAENC_KEY_BEGIN/END 标记之间解析 SEGS/MASK/MAP 三张表
-    重建 32 字节密钥：key[i] = SEGS[MAP[i]] ^ MASK[MAP[i]]。"""
+    """从 luaenc.c 的 LUAENC_KEY_BEGIN/END 标记之间解析 6 张混淆表
+    （A/B/C/R/P/W），按与设备端 luaEnc_getKey 逐位一致的多级逻辑重组出
+    32 字节密钥：
+
+        阶段一（按置换 P 收集，每字节混入异或掩码 B + 加法掩码 C + 位旋转 R）：
+            j = P[i]; s[i] = rotl8( ((A[j] ^ B[j]) + C[j]) & 0xff , R[j] & 7 )
+        阶段二（CBC 式链式白化，令每个输出字节耦合前一个）：
+            prev = 0xA5; key[i] = s[i] ^ W[i] ^ prev; prev = key[i]
+
+    这份逻辑是 gen_key.py 的逆运算的正向，三处（C / load_key / gen_key）
+    互为镜像，任一漂移都会被 selftest 与 C↔Python 交叉验证抓出。"""
     txt = pathlib.Path(path).read_text(encoding="utf-8", errors="replace")
 
     def grab(name):
@@ -37,13 +51,23 @@ def load_key(path=_LUAENC_C):
         nums = re.findall(r"0x([0-9a-fA-F]{2})", m.group(1))
         if len(nums) != 32:
             raise SystemExit(f"LUAENC_KEY_{name} 应为 32 字节，实际解析出 {len(nums)} 个")
-        return bytes(int(x, 16) for x in nums)
+        return [int(x, 16) for x in nums]
 
-    segs, mask, mp = grab("SEGS"), grab("MASK"), grab("MAP")
-    if sorted(mp) != list(range(32)):
-        raise SystemExit("LUAENC_KEY_MAP 不是 0..31 的置换")
-    key = bytes(segs[i] ^ mask[i] for i in mp)
-    return key
+    A, B, C, R, P, W = (grab(n) for n in ("A", "B", "C", "R", "P", "W"))
+    if sorted(P) != list(range(32)):
+        raise SystemExit("LUAENC_KEY_P 不是 0..31 的置换")
+    s = [0] * 32
+    for i in range(32):
+        j = P[i]
+        v = (A[j] ^ B[j])
+        v = (v + C[j]) & 0xFF
+        s[i] = _rotl8(v, R[j] & 7)
+    key = bytearray(32)
+    prev = 0xA5
+    for i in range(32):
+        key[i] = s[i] ^ W[i] ^ prev
+        prev = key[i]
+    return bytes(key)
 
 
 def _tag(key, nonce):
