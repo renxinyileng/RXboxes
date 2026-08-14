@@ -58,7 +58,10 @@ Java 只提供壳与 JNI 桥。两个 Gradle 模块：
   （据密钥反解、绝不打印明文），改后必须重编 so。
 - 定制 VM（opcode 重排 + 位域盐）由 `native/luaenc/gen_opcodes.py` 生成；
   CI 用 host lua `string.dump(f,true)` strip 调试信息（unluac 失效）。
-- 反注入/反调试在 `luaanti.c`（Frida maps/线程名/27042/TracerPid，全 syscall 直读）。
+- 反注入/反调试在 `luaanti.c`（Frida maps/线程名/27042/TracerPid，全 syscall 直读；
+  特征串按 volatile XOR 盐加密存放，防 `strings` 抖出方案，`LUAANTI_TEST_MAIN` 自测）。
+- 设备端 `luaEnc_getKey` 在六表之上再叠碎片化 + MBA + volatile 防常量折叠（仅 C 侧，
+  不改结果，`pack.py` 仍是干净镜像）。
 
 **改 luaenc.c 或 pack.py 后必做的自检**（两端漂移会静默出坏包）：
 
