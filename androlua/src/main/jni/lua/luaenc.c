@@ -81,25 +81,48 @@ static unsigned char luaEnc_rotl8(unsigned char x, unsigned n) {
   return (unsigned char)(((x << n) | (x >> ((8 - n) & 7))) & 0xff);
 }
 
+/* volatile 锚点：本文件在 ndk 侧用 -O3 -flto 编译、六表又全是 const，编译器
+ * 有能力把「const 表 → 成品密钥」整体常量折叠进 .rodata——那样拆表就白拆。
+ * 把重组结果挂到一个 volatile（运行期恒为 0xA5、编译期不可知）上，强制每次
+ * 真正跑一遍重组，成品 32 字节密钥不会以常量形式静态留在镜像里。 */
+static volatile unsigned char luaEnc_anchor = 0xA5;
+
+/* 阶段一单字节重组，__noinline__ 拆散成独立函数体（碎片化）：置换取表 +
+ * 异或掩码 + 加法掩码 + 位旋转。其中 +、^ 用 MBA 恒等式改写
+ * （a^b = (a|b)-(a&b)；a+b = (a^b)+2*(a&b)），抹掉「一眼看出是查表异或」的
+ * 模式；zero 恒为 0（volatile 派生）参与运算以牵制优化器，不改变结果。 */
+static __attribute__((noinline))
+unsigned char luaEnc_stage1(int i, unsigned char zero) {
+  unsigned char j = LUAENC_KEY_P[i];
+  unsigned char a = LUAENC_KEY_A[j];
+  unsigned char b = LUAENC_KEY_B[j];
+  unsigned char c = LUAENC_KEY_C[j];
+  unsigned char x = (unsigned char)(((a | b) - (a & b)) & 0xff);         /* a ^ b */
+  unsigned char v = (unsigned char)(((x ^ c) + ((x & c) << 1)) & 0xff);  /* x + c */
+  v = (unsigned char)(v ^ zero);
+  return luaEnc_rotl8(v, LUAENC_KEY_R[j] & 7);
+}
+
 /* 运行时重组 32 字节密钥（与 pack.py 的 load_key、gen_key.py 的 reconstruct
- * 逐位一致）：
- *   阶段一（按置换收集，每字节混入异或掩码 + 加法掩码 + 位旋转）：
- *     j = P[i]; s[i] = rotl8( ((A[j] ^ B[j]) + C[j]) & 0xff , R[j] & 7 )
- *   阶段二（CBC 式链式白化，令每个输出字节耦合前一个）：
- *     prev = 0xA5; out[i] = s[i] ^ W[i] ^ prev; prev = out[i] */
+ * 结果逐位一致；设备端额外做碎片化 / MBA / 防折叠混淆，不改变结果）：
+ *   阶段一：j = P[i]; s[i] = rotl8( ((A[j]^B[j])+C[j])&0xff , R[j]&7 )
+ *   阶段二（CBC 式链式白化）：prev = 0xA5; out[i] = s[i]^W[i]^prev; prev = out[i]
+ * 成品密钥用完由调用方立即擦除（keystream_block / compute_tag 均 wipe）。 */
 static void luaEnc_getKey(unsigned char out[32]) {
   unsigned char s[32];
   unsigned char prev;
-  int i;
-  for (i = 0; i < 32; i++) {
-    unsigned char j = LUAENC_KEY_P[i];
-    unsigned char v = (unsigned char)(LUAENC_KEY_A[j] ^ LUAENC_KEY_B[j]);
-    v = (unsigned char)((v + LUAENC_KEY_C[j]) & 0xff);
-    s[i] = luaEnc_rotl8(v, LUAENC_KEY_R[j] & 7);
+  unsigned char zero;
+  int k, i;
+  zero = (unsigned char)(luaEnc_anchor ^ 0xA5);   /* 恒 0，但非编译期常量 */
+  /* 以步长 7（与 32 互素，构成置换）乱序填充 s[]，避开顺序循环的可读模式 */
+  for (k = 0; k < 32; k++) {
+    i = (k * 7) & 31;
+    s[i] = luaEnc_stage1(i, zero);
   }
-  prev = 0xA5;
+  prev = (unsigned char)luaEnc_anchor;            /* 0xA5，volatile 读 */
   for (i = 0; i < 32; i++) {
-    out[i] = (unsigned char)(s[i] ^ LUAENC_KEY_W[i] ^ prev);
+    unsigned char t = (unsigned char)(s[i] ^ LUAENC_KEY_W[i]);
+    out[i] = (unsigned char)(t ^ prev);
     prev = out[i];
   }
   luaEnc_wipe(s, sizeof(s));
