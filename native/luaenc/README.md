@@ -17,7 +17,7 @@ hook `luaL_loadbufferx` 在解密后的那一刻 dump 内存明文。
 | 文件 | 作用 |
 |---|---|
 | `androlua/src/main/jni/lua/luaenc.c` / `.h` | 设备端解密。含内置 SHA-256、AES-256、**唯一真源的密钥（六表多级拆分）**、CTR-XOR 解密、常量池载荷盐、解密入口自校验 |
-| `androlua/src/main/jni/lua/luaanti.c` / `.h` | 反 Frida / 反调试：maps 扫描、线程名、27042 D-Bus 握手、TracerPid（全 syscall 直读），命中即延迟自毁 |
+| `androlua/src/main/jni/lua/luaanti.c` / `.h` | 反 Frida / 反调试：maps 扫描、线程名、27042 D-Bus 握手、TracerPid（全 syscall 直读），命中即延迟自毁；特征串按 XOR 盐加密存放（防 `strings` 抖出方案） |
 | `androlua/src/main/jni/lua/ldump.c` / `lundump.c`（改动） | 字节码常量池载荷加密（字符串/数值 XOR 盐），两端对称 |
 | `androlua/src/main/jni/lua/lauxlib.c`（改动） | 在 `luaL_loadfilex` / `luaL_loadbufferx` 里挂解密钩子 + 反注入检测 + 明文用完即擦 |
 | `androlua/src/main/jni/lua/lopcodes.h` 等 4 文件（改动） | **定制 VM**：83 个 opcode 重排 + iABC 的 B/C 位域交换（见下） |
@@ -96,6 +96,21 @@ C↔Python round-trip 都会立刻抓出不一致。
 不带参数时保持现有密钥值不变、只换一套混淆拆分；该脚本据目标密钥反解 6 表，
 **绝不打印密钥明文**。改后必须重编 `libluajava.so` 并重新出包，旧包不兼容。
 
+### 设备端重组的额外混淆（仅 C 侧，不改结果）
+
+`luaEnc_getKey` 在六表重组之上再叠三层，只让设备侧难读，`pack.py`/`gen_key.py`
+仍是干净镜像：
+
+- **防常量折叠**：本文件在 ndk 侧以 `-O3 -flto` 编译、六表又全 `const`，编译器
+  能把「const 表 → 成品密钥」整体折叠进 `.rodata`（拆表白拆）。挂一个 volatile
+  锚点（运行期恒 `0xA5`、编译期不可知）参与重组，强制每次真跑一遍——实测 `-O3`
+  产物里搜不到成品密钥的连续 32 字节。
+- **碎片化**：阶段一单字节重组拆成 `__noinline__` 的 `luaEnc_stage1`。
+- **MBA 恒等式**：`+`/`^` 改写成 `(a|b)-(a&b)` / `(a^b)+2*(a&b)`，抹掉「查表异或」
+  的可辨模式；中间数组按步长 7 乱序填充，避开顺序循环。
+
+成品密钥用完即擦（中间态与调用方 `keystream_block`/`compute_tag` 均 wipe）。
+
 ## 常量池载荷盐
 
 `string.dump`/`luac -s` 产出的字节码里，字符串与数值常量载荷在
@@ -117,6 +132,13 @@ C↔Python round-trip 都会立刻抓出不一致。
 3 秒节流缓存。此外 `luaEnc_decrypt` 入口自校验（首调快照 + 每次比对），
 入口被 inline hook 改写即拒绝解密。均为拖延层：Frida 改名/换端口/重编译
 可绕过，2025 年起 KPM（内核级）可屏蔽 TracerPid 读取。
+
+**特征串加密存放**：上述特征词（`frida`/`gum-js`/`pool-frida`/`TracerPid:`/
+`REJECTED` 等、以及 `/proc` 路径与 AUTH 握手字节）不以明文入 `.so`，而是按
+固定 XOR 盐存放、用时解到栈缓冲、用完即弃，避免 `strings | grep frida` 一下
+就把检测方案抖搂干净。盐取自 volatile（否则 `-O3` 会在编译期把明文折叠回
+`.rodata`）；`LUAANTI_TEST_MAIN` 自测逐条校验解出的明文，编码手误编译期即失败，
+不会静默让某路检测失效。仅抬高静态阅读门槛，非密码学。
 
 ## 为什么钩这两个函数就够
 
