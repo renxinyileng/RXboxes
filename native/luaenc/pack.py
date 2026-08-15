@@ -12,7 +12,7 @@ Lua 脚本打包加密器。与设备端 androlua/src/main/jni/lua/luaenc.c 同�
                                    传 --lua 时先 strip 编译成字节码再加密
   pack.py enc-file <in> <out>      加密单个文件（调试/测试用）
 """
-import hashlib, os, re, struct, subprocess, sys, zipfile, pathlib
+import hashlib, os, re, subprocess, sys, zipfile, pathlib
 
 # 无明文魔数：头 = nonce(8) + tag(8)，tag = SHA256(KEY||nonce)[:8]。
 # 没有 KEY 就算不出 tag，所以文件头对外看是随机字节、grep 不到签名。
@@ -24,9 +24,23 @@ _HERE = pathlib.Path(__file__).resolve().parent
 _LUAENC_C = _HERE.parent.parent / "androlua/src/main/jni/lua/luaenc.c"
 
 
+def _rotl8(x, n):
+    n &= 7
+    return ((x << n) | (x >> ((8 - n) & 7))) & 0xFF
+
+
 def load_key(path=_LUAENC_C):
-    """从 luaenc.c 的 LUAENC_KEY_BEGIN/END 标记之间解析 SEGS/MASK/MAP 三张表
-    重建 32 字节密钥：key[i] = SEGS[MAP[i]] ^ MASK[MAP[i]]。"""
+    """从 luaenc.c 的 LUAENC_KEY_BEGIN/END 标记之间解析 6 张混淆表
+    （A/B/C/R/P/W），按与设备端 luaEnc_getKey 逐位一致的多级逻辑重组出
+    32 字节密钥：
+
+        阶段一（按置换 P 收集，每字节混入异或掩码 B + 加法掩码 C + 位旋转 R）：
+            j = P[i]; s[i] = rotl8( ((A[j] ^ B[j]) + C[j]) & 0xff , R[j] & 7 )
+        阶段二（CBC 式链式白化，令每个输出字节耦合前一个）：
+            prev = 0xA5; key[i] = s[i] ^ W[i] ^ prev; prev = key[i]
+
+    这份逻辑是 gen_key.py 的逆运算的正向，三处（C / load_key / gen_key）
+    互为镜像，任一漂移都会被 selftest 与 C↔Python 交叉验证抓出。"""
     txt = pathlib.Path(path).read_text(encoding="utf-8", errors="replace")
 
     def grab(name):
@@ -37,31 +51,110 @@ def load_key(path=_LUAENC_C):
         nums = re.findall(r"0x([0-9a-fA-F]{2})", m.group(1))
         if len(nums) != 32:
             raise SystemExit(f"LUAENC_KEY_{name} 应为 32 字节，实际解析出 {len(nums)} 个")
-        return bytes(int(x, 16) for x in nums)
+        return [int(x, 16) for x in nums]
 
-    segs, mask, mp = grab("SEGS"), grab("MASK"), grab("MAP")
-    if sorted(mp) != list(range(32)):
-        raise SystemExit("LUAENC_KEY_MAP 不是 0..31 的置换")
-    key = bytes(segs[i] ^ mask[i] for i in mp)
-    return key
-
-
-def _keystream_block(key, nonce, j):
-    return hashlib.sha256(key + nonce + struct.pack("<Q", j)).digest()
+    A, B, C, R, P, W = (grab(n) for n in ("A", "B", "C", "R", "P", "W"))
+    if sorted(P) != list(range(32)):
+        raise SystemExit("LUAENC_KEY_P 不是 0..31 的置换")
+    s = [0] * 32
+    for i in range(32):
+        j = P[i]
+        v = (A[j] ^ B[j])
+        v = (v + C[j]) & 0xFF
+        s[i] = _rotl8(v, R[j] & 7)
+    key = bytearray(32)
+    prev = 0xA5
+    for i in range(32):
+        key[i] = s[i] ^ W[i] ^ prev
+        prev = key[i]
+    return bytes(key)
 
 
 def _tag(key, nonce):
-    # SHA256(KEY||nonce)[:8]；与密钥流输入长度不同，天然不撞
+    # SHA256(KEY||nonce)[:8]，作"是否本方案加密"的判据 + 密钥校验，与密码算法无关
     return hashlib.sha256(key + nonce).digest()[:TAG_LEN]
 
 
+# ---- AES-256（纯 Python，无外部依赖）----
+# 与设备端 luaenc.c 逐位对齐（FIPS-197，Nk=8, Nr=14，只需前向分组加密）。
+# 刻意不依赖 cryptography/pycryptodome：该环境里 cryptography 的 _cffi_backend
+# 常缺失、CI runner 也未必可靠；纯 Python 与项目内自带 SHA-256 的做法一致。
+_AES_SBOX = bytes([
+  0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
+  0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
+  0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
+  0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
+  0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
+  0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
+  0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
+  0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
+  0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
+  0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
+  0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
+  0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
+  0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
+  0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
+  0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
+  0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16,
+])
+
+
+def _aes_xtime(x):
+    return ((x << 1) ^ (0x1b if x & 0x80 else 0)) & 0xff
+
+
+def _aes_key_expansion(key):
+    rk = bytearray(key)              # 32 -> 240 字节
+    rcon = 1
+    i = 32
+    while i < 240:
+        t = list(rk[i - 4:i])
+        if i % 32 == 0:
+            t = [_AES_SBOX[t[1]] ^ rcon, _AES_SBOX[t[2]], _AES_SBOX[t[3]], _AES_SBOX[t[0]]]
+            rcon = _aes_xtime(rcon)
+        elif i % 32 == 16:
+            t = [_AES_SBOX[b] for b in t]
+        for k in range(4):
+            rk.append(rk[i - 32 + k] ^ t[k])
+        i += 4
+    return bytes(rk)
+
+
+def _aes_encrypt_block(key, blk):
+    rk = _aes_key_expansion(key)
+    s = bytearray(blk)              # 列主序：(行 r, 列 c) = s[r + 4c]
+    for k in range(16):
+        s[k] ^= rk[k]
+    x = _aes_xtime
+    for rnd in range(1, 15):
+        for k in range(16):
+            s[k] = _AES_SBOX[s[k]]
+        s[1], s[5], s[9], s[13] = s[5], s[9], s[13], s[1]
+        s[2], s[6], s[10], s[14] = s[10], s[14], s[2], s[6]
+        s[3], s[7], s[11], s[15] = s[15], s[3], s[7], s[11]
+        if rnd != 14:
+            for c in range(4):
+                o = 4 * c
+                a0, a1, a2, a3 = s[o], s[o + 1], s[o + 2], s[o + 3]
+                s[o]     = x(a0) ^ (x(a1) ^ a1) ^ a2 ^ a3
+                s[o + 1] = a0 ^ x(a1) ^ (x(a2) ^ a2) ^ a3
+                s[o + 2] = a0 ^ a1 ^ x(a2) ^ (x(a3) ^ a3)
+                s[o + 3] = (x(a0) ^ a0) ^ a1 ^ a2 ^ x(a3)
+        for k in range(16):
+            s[k] ^= rk[16 * rnd + k]
+    return bytes(s)
+
+
 def _xor_ctr(key, nonce, data):
+    # AES-256-CTR：块 j 的密钥流 = AES(key, nonce(8) || u64_be(j))，逐 16 字节异或。
+    # 与设备端 luaenc.c 的 keystream_block 完全一致。
     out = bytearray(len(data))
     ks = b""
     for i in range(len(data)):
-        if i % 32 == 0:
-            ks = _keystream_block(key, nonce, i // 32)
-        out[i] = data[i] ^ ks[i % 32]
+        if i % 16 == 0:
+            ctr = nonce + (i // 16).to_bytes(8, "big")
+            ks = _aes_encrypt_block(key, ctr)
+        out[i] = data[i] ^ ks[i % 16]
     return bytes(out)
 
 
@@ -92,14 +185,19 @@ def strip_compile(lua_exe, src, dst):
     (等价 luac -s)，供 enc-apk 在加密前调用。失败抛 SystemExit。"""
     # string.dump(f, true) 第二参数 true = strip；写出的字节码仍带 5.4 头，
     # 设备端 luaL_loadbufferx 解密后直接 undump（定制 VM 同源码，两端一致）
+    #
+    # 路径经环境变量传入，不走位置参数：`lua -e chunk A B` 里 A 会被当成
+    # 待执行的脚本文件（arg[0]=A、arg[1]=B），chunk 拿不到 src——用
+    # os.getenv 一次性绕开 -e 的 arg 语义，也顺带免掉路径含引号的转义问题。
     script = (
-        "local f=assert(loadfile(arg[1]))\n"
+        "local f=assert(loadfile(os.getenv('LUAENC_SRC')))\n"
         "local s=string.dump(f,true)\n"
-        "local h=assert(io.open(arg[2],'wb'))\n"
+        "local h=assert(io.open(os.getenv('LUAENC_DST'),'wb'))\n"
         "h:write(s)\nh:close()"
     )
-    r = subprocess.run([lua_exe, "-e", script, str(src), str(dst)],
-                       capture_output=True, text=True)
+    env = dict(os.environ, LUAENC_SRC=str(src), LUAENC_DST=str(dst))
+    r = subprocess.run([lua_exe, "-e", script],
+                       capture_output=True, text=True, env=env)
     if r.returncode != 0:
         raise SystemExit(
             f"::error::strip 编译失败 {src}: {r.stderr.strip()}")
@@ -108,8 +206,13 @@ def strip_compile(lua_exe, src, dst):
 def enc_apk(src, dst, key, lua_exe=None):
     """把 APK 内每个 *.lua 条目替换成密文，其余条目原样复制。
     传 lua_exe 时先 strip 编译成字节码再加密（阶段 A）；否则直接加密文本。
-    返回改写条数。"""
+    返回改写条数。
+
+    安全护栏：若 APK 已带 v2/v3 签名块（"APK Sig Block 42"），改写会破坏签名，
+    直接拒绝。所以本步必须在签名之前跑（CI 里就是签名前）。"""
     import tempfile
+    if b"APK Sig Block 42" in pathlib.Path(src).read_bytes():
+        raise SystemExit(f"::error::{src} 已签名，加密会破坏签名——请在签名前加密")
     n = 0
     with zipfile.ZipFile(src, "r") as zin, \
          zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:

@@ -104,7 +104,7 @@ jobs:
       - name: 构建 host lua（用于 strip 编译）
         run: |
           make -C androlua/src/main/jni/lua all \
-            MYCFLAGS="-std=c99 -DLUA_USE_LINUX" MYLIBS="-ldl" \
+            MYCFLAGS="-std=c99 -D_GNU_SOURCE -DLUA_USE_LINUX" MYLIBS="-ldl" \
             -j"$(nproc)"
           test -x androlua/src/main/jni/lua/lua
 
