@@ -20,6 +20,7 @@
 #include "lfunc.h"
 #include "lmem.h"
 #include "lobject.h"
+#include "lopcodes.h"
 #include "lstring.h"
 #include "lundump.h"
 #include "luaenc.h"
@@ -35,6 +36,7 @@ typedef struct {
   lua_State *L;
   ZIO *Z;
   const char *name;
+  int standard;  /* stock Lua 5.4 chunk; otherwise our salted VM format */
 } LoadState;
 
 
@@ -99,7 +101,8 @@ static lua_Number loadNumber (LoadState *S) {
   loadVar(S, x);
   /* 常量盐：与 ldump.c dumpNumber 对称还原 */
   p = (unsigned char *)&x;
-  for (i = 0; i < (int)sizeof(x); i++) p[i] ^= m[i & 7];
+  if (!S->standard)
+    for (i = 0; i < (int)sizeof(x); i++) p[i] ^= m[i & 7];
   return x;
 }
 
@@ -111,7 +114,8 @@ static lua_Integer loadInteger (LoadState *S) {
   int i;
   loadVar(S, x);
   p = (unsigned char *)&x;
-  for (i = 0; i < (int)sizeof(x); i++) p[i] ^= m[i & 7];
+  if (!S->standard)
+    for (i = 0; i < (int)sizeof(x); i++) p[i] ^= m[i & 7];
   return x;
 }
 
@@ -131,7 +135,8 @@ static TString *loadStringN (LoadState *S, Proto *p) {
     size_t i;
     loadVector(S, buff, size);  /* load string into buffer */
     /* 常量盐：与 ldump.c dumpString 对称还原 */
-    for (i = 0; i < size; i++) buff[i] ^= (char)m[i & 7];
+    if (!S->standard)
+      for (i = 0; i < size; i++) buff[i] ^= (char)m[i & 7];
     ts = luaS_newlstr(L, buff, size);  /* create string */
   }
   else {  /* long string */
@@ -143,7 +148,8 @@ static TString *loadStringN (LoadState *S, Proto *p) {
       const unsigned char *m = luaEnc_constMask();
       unsigned char *p = (unsigned char *)getlngstr(ts);
       size_t i;
-      for (i = 0; i < size; i++) p[i] ^= m[i & 7];
+      if (!S->standard)
+        for (i = 0; i < size; i++) p[i] ^= m[i & 7];
     }
     L->top.p--;  /* pop string */
   }
@@ -163,11 +169,56 @@ static TString *loadString (LoadState *S, Proto *p) {
 }
 
 
+/* Lua 5.4's public opcode order, independent of the private enum order.
+** Only ABC instructions swap B/C: Bx, sBx, Ax and sJ share those bits
+** as a single operand and must be preserved verbatim.
+*/
+static Instruction convertStandardInstruction (LoadState *S, Instruction i) {
+  static const OpCode standardops[] = {
+    OP_MOVE, OP_LOADI, OP_LOADF, OP_LOADK, OP_LOADKX,
+    OP_LOADFALSE, OP_LFALSESKIP, OP_LOADTRUE, OP_LOADNIL,
+    OP_GETUPVAL, OP_SETUPVAL, OP_GETTABUP, OP_GETTABLE, OP_GETI,
+    OP_GETFIELD, OP_SETTABUP, OP_SETTABLE, OP_SETI, OP_SETFIELD,
+    OP_NEWTABLE, OP_SELF, OP_ADDI, OP_ADDK, OP_SUBK, OP_MULK,
+    OP_MODK, OP_POWK, OP_DIVK, OP_IDIVK, OP_BANDK, OP_BORK,
+    OP_BXORK, OP_SHRI, OP_SHLI, OP_ADD, OP_SUB, OP_MUL, OP_MOD,
+    OP_POW, OP_DIV, OP_IDIV, OP_BAND, OP_BOR, OP_BXOR, OP_SHL,
+    OP_SHR, OP_MMBIN, OP_MMBINI, OP_MMBINK, OP_UNM, OP_BNOT,
+    OP_NOT, OP_LEN, OP_CONCAT, OP_CLOSE, OP_TBC, OP_JMP, OP_EQ,
+    OP_LT, OP_LE, OP_EQK, OP_EQI, OP_LTI, OP_LEI, OP_GTI, OP_GEI,
+    OP_TEST, OP_TESTSET, OP_CALL, OP_TAILCALL, OP_RETURN,
+    OP_RETURN0, OP_RETURN1, OP_FORLOOP, OP_FORPREP, OP_TFORPREP,
+    OP_TFORCALL, OP_TFORLOOP, OP_SETLIST, OP_CLOSURE, OP_VARARG,
+    OP_VARARGPREP, OP_EXTRAARG
+  };
+  unsigned int opcode = cast_uint(i & 0x7fu);
+  OpCode mapped;
+  if (opcode >= sizeof(standardops) / sizeof(standardops[0]))
+    error(S, "invalid standard opcode");
+  mapped = standardops[opcode];
+  SET_OPCODE(i, mapped);
+  if (getOpMode(mapped) == iABC) {
+    unsigned int b = cast_uint((i >> 16) & 0xffu);
+    unsigned int c = cast_uint((i >> 24) & 0xffu);
+    SETARG_B(i, b);
+    SETARG_C(i, c);
+  }
+  return i;
+}
+
+
 static void loadCode (LoadState *S, Proto *f) {
+  int i;
   int n = loadInt(S);
   f->code = luaM_newvectorchecked(S->L, n, Instruction);
   f->sizecode = n;
   loadVector(S, f->code, n);
+  for (i = 0; i < n; i++) {
+    if (S->standard)
+      f->code[i] = convertStandardInstruction(S, f->code[i]);
+    else if (cast_uint(GET_OPCODE(f->code[i])) >= NUM_OPCODES)
+      error(S, "invalid opcode");
+  }
 }
 
 
@@ -204,7 +255,7 @@ static void loadConstants (LoadState *S, Proto *f) {
       case LUA_VLNGSTR:
         setsvalue2n(S->L, o, loadString(S, f));
         break;
-      default: lua_assert(0);
+      default: error(S, "invalid constant type");
     }
   }
 }
@@ -312,6 +363,7 @@ static void fchecksize (LoadState *S, size_t size, const char *tname) {
 #define checksize(S,t)	fchecksize(S,sizeof(t),#t)
 
 static void checkHeader (LoadState *S) {
+  lua_Integer checkinteger;
   /* skip 1st char (already read and checked) */
   checkliteral(S, &LUA_SIGNATURE[1], "not a binary chunk");
   if (loadByte(S) != LUAC_VERSION)
@@ -322,8 +374,21 @@ static void checkHeader (LoadState *S) {
   checksize(S, Instruction);
   checksize(S, lua_Integer);
   checksize(S, lua_Number);
-  if (loadInteger(S) != LUAC_INT)
-    error(S, "integer format mismatch");
+  /* Existing private chunks salt the header probes as well as constants.
+  ** Detect the input once, before reading any strings or instructions.
+  ** Keep dumping in the private format so existing encrypted assets and
+  ** string.dump round trips retain their format.
+  */
+  loadVar(S, checkinteger);
+  S->standard = (checkinteger == LUAC_INT);
+  if (!S->standard) {
+    const unsigned char *mask = luaEnc_constMask();
+    unsigned char *bytes = (unsigned char *)&checkinteger;
+    size_t i;
+    for (i = 0; i < sizeof(checkinteger); i++) bytes[i] ^= mask[i & 7];
+    if (checkinteger != LUAC_INT)
+      error(S, "integer format mismatch");
+  }
   if (loadNumber(S) != LUAC_NUM)
     error(S, "float format mismatch");
 }
@@ -350,7 +415,8 @@ LClosure *luaU_undump(lua_State *L, ZIO *Z, const char *name) {
   cl->p = luaF_newproto(L);
   luaC_objbarrier(L, cl, cl->p);
   loadFunction(&S, cl->p, NULL);
-  lua_assert(cl->nupvalues == cl->p->sizeupvalues);
+  if (cl->nupvalues != cl->p->sizeupvalues)
+    error(&S, "upvalue count mismatch");
   luai_verifycode(L, cl->p);
   return cl;
 }

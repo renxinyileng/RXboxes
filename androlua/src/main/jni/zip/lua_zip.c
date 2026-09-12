@@ -791,3 +791,8 @@ LUALIB_API int luaopen_brimworks_zip(lua_State* L) {
 
     return 1;
 }
+
+/* The Android library is named libzip.so; retain the historical entry too. */
+LUALIB_API int luaopen_zip(lua_State* L) {
+    return luaopen_brimworks_zip(L);
+}

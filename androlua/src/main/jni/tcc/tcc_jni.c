@@ -21,6 +21,49 @@
 #include <lauxlib.h>
 #include <lualib.h>
 
+/* This bundled TinyCC 0.9.26 has an ARM32 backend only. A library built
+ * for arm64 can expose its status, but must never execute ARM32 output. */
+#if defined(__arm__) && defined(TCC_TARGET_ARM)
+#define LUA_TCC_NATIVE 1
+#else
+#define LUA_TCC_NATIVE 0
+#endif
+
+static int tcc_require_native(lua_State *L) {
+    if (!LUA_TCC_NATIVE)
+        return luaL_error(L, "TCC execution is unavailable on this ABI; "
+                            "the bundled compiler supports ARM32 only");
+    return 0;
+}
+
+static int l_tcc_is_supported(lua_State *L) {
+    lua_pushboolean(L, LUA_TCC_NATIVE);
+    return 1;
+}
+
+static int l_tcc_capabilities(lua_State *L) {
+    lua_newtable(L);
+    lua_pushboolean(L, LUA_TCC_NATIVE);
+    lua_setfield(L, -2, "native_execution");
+    lua_pushliteral(L, "arm");
+    lua_setfield(L, -2, "target_arch");
+#if defined(__aarch64__)
+    lua_pushliteral(L, "arm64-v8a");
+#elif defined(__arm__)
+    lua_pushliteral(L, "armeabi-v7a");
+#else
+    lua_pushliteral(L, "unsupported");
+#endif
+    lua_setfield(L, -2, "host_abi");
+    if (!LUA_TCC_NATIVE) {
+        lua_pushliteral(L, "The bundled compiler supports ARM32 execution only");
+        lua_setfield(L, -2, "reason");
+    }
+    return 1;
+}
+
+int pushtccstate(lua_State *L, TCCState **p);
+
 void bar(const char* fmt, ...) {
     va_list vl;
     va_start(vl, fmt);
@@ -54,6 +97,7 @@ static void error_func(void *opaque, const char *msg) {
 int l_tcc_new(lua_State * L)
 {
     TCCState *s;
+    tcc_require_native(L);
     s = tcc_new();
     if (!s) {
         trace("Could not create tcc state");
@@ -85,7 +129,7 @@ int l_tcc_set_lib_path(lua_State * L)
 {
 	TCCState *s;
 	s=*(TCCState**)luaL_checkudata(L,1,"TCCState");
-	tcc_set_lib_path(s,lua_tostring(L,1));
+		tcc_set_lib_path(s,luaL_checkstring(L,2));
 	return 0;
 }
 
@@ -211,6 +255,8 @@ int l_tcc_output_file(lua_State * L)
 
 int l_tcc_run(lua_State * L)
 {
+
+#if LUA_TCC_NATIVE
 	TCCState *s;
 	s=*(TCCState**)luaL_checkudata(L,1,"TCCState");
 	
@@ -223,12 +269,12 @@ int l_tcc_run(lua_State * L)
 		args[i - 2] = lua_tostring(L,i);
 	}
 
-	int ret;
-# if defined __arm__ && defined TCC_TARGET_ARM
-	ret = tcc_run(s, countof(args), (char **) args);
-# endif
+	int ret = tcc_run(s, countof(args), (char **) args);
 	lua_pushinteger(L,ret);
 	return 1;
+#else
+    return tcc_require_native(L);
+#endif
 }
 /*
 int l_tcc_get_symbol(lua_State * L)
@@ -243,21 +289,29 @@ int l_tcc_get_symbol(lua_State * L)
 
 int l_tcc_get_function(lua_State * L)
 {
+
+    tcc_require_native(L);
 	TCCState *s;
 	int (*func)(lua_State * );
 	s=*(TCCState**)luaL_checkudata(L,1,"TCCState");
 	const char *str=lua_tostring(L,2);
     func=tcc_get_symbol(s, str);
+    if (!func)
+        return luaL_error(L, "TCC symbol not found: %s", str);
 	lua_pushcfunction(L,func);
 	return 1;
 }
 
 int l_tcc_call(lua_State * L)
 {
+
+    tcc_require_native(L);
 	TCCState *s;
 	int (*func)(void *);
 	s=*(TCCState**)luaL_checkudata(L,1,"TCCState");
 	func = tcc_get_symbol(s, "foo");
+    if (!func)
+        return luaL_error(L, "TCC symbol not found: foo");
     void * arg;
 	switch(lua_type(L,2)){
 		case LUA_TNUMBER:
@@ -270,9 +324,11 @@ int l_tcc_call(lua_State * L)
 			const char *str=lua_tostring(L,2);
 			arg=&str;
 			break;}
-		case LUA_TUSERDATA:
-			arg=lua_touserdata(L,2);
-			break;
+			case LUA_TUSERDATA:
+				arg=lua_touserdata(L,2);
+				break;
+            default:
+                return luaL_argerror(L, 2, "number, string or userdata expected");
 	}
 	
 	int ret=func(arg);
@@ -332,6 +388,8 @@ int pushvoid(lua_State * L, void* p)
 int _EXPORT luaopen_tcc(lua_State * L)
 {
 	static const struct luaL_reg funcs[] = {
+	{"is_supported", l_tcc_is_supported},
+	{"capabilities", l_tcc_capabilities},
 	{"new", l_tcc_new},
 	{"delete", l_tcc_delete},
 	{"set_lib_path", l_tcc_set_lib_path},

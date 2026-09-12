@@ -100,8 +100,24 @@ public class LuaState {
     /**
      * error while running the error handler function.
      */
-    final public static int LUA_ERRGCMM = 5;
-    final public static int LUA_ERRERR = 6;
+    /** @deprecated Lua 5.4 reports finalizer errors as LUA_ERRRUN. */
+    @Deprecated
+    final public static int LUA_ERRGCMM = LUA_ERRRUN;
+    final public static int LUA_ERRERR = 5;
+    final public static int LUA_ERRFILE = LUA_ERRERR + 1;
+
+    /** Describes the error codes returned by the embedded Lua 5.4 runtime. */
+    public static String errorReason(int error) {
+        switch (error) {
+            case LUA_YIELD: return "Yield error";
+            case LUA_ERRRUN: return "Runtime error";
+            case LUA_ERRSYNTAX: return "Syntax error";
+            case LUA_ERRMEM: return "Out of memory";
+            case LUA_ERRERR: return "Error in error handler";
+            case LUA_ERRFILE: return "File error";
+            default: return "Unknown error " + error;
+        }
+    }
 
     final public static int LUA_OPEQ = 0;
     final public static int LUA_OPLT = 1;
