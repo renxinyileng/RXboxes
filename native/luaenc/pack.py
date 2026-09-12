@@ -11,8 +11,10 @@ Lua 脚本打包加密器。与设备端 androlua/src/main/jni/lua/luaenc.c 同�
                                    把 APK 内所有 *.lua 条目改写成密文；
                                    传 --lua 时先 strip 编译成字节码再加密
   pack.py enc-file <in> <out>      加密单个文件（调试/测试用）
+  pack.py verify-apk <apk> [--lua <host-lua>]
+                                   检查密文格式；传 --lua 时逐个解密并解析
 """
-import hashlib, os, re, struct, subprocess, sys, zipfile, pathlib
+import hashlib, os, re, struct, subprocess, sys, zipfile, pathlib, tempfile
 
 # 无明文魔数：头 = nonce(8) + tag(8)，tag = SHA256(KEY||nonce)[:8]。
 # 没有 KEY 就算不出 tag，所以文件头对外看是随机字节、grep 不到签名。
@@ -87,6 +89,16 @@ def decrypt(data, key):
     return _xor_ctr(key, nonce, data[HEADER_LEN:])
 
 
+def run_lua_helper(lua_exe, script, *args):
+    """从 stdin 运行辅助脚本，arg[1..] 仅作参数，绝不作为主脚本执行。
+
+    -E 禁止 LUA_INIT/LUA_PATH 等宿主环境变量影响构建。
+    """
+    return subprocess.run(
+        [str(lua_exe), "-E", "-", *(str(arg) for arg in args)],
+        input=script, capture_output=True, text=True)
+
+
 def strip_compile(lua_exe, src, dst):
     """用与设备同源码编译的 host lua 把 .lua 编译成 strip 调试信息的字节码
     (等价 luac -s)，供 enc-apk 在加密前调用。失败抛 SystemExit。"""
@@ -96,10 +108,9 @@ def strip_compile(lua_exe, src, dst):
         "local f=assert(loadfile(arg[1]))\n"
         "local s=string.dump(f,true)\n"
         "local h=assert(io.open(arg[2],'wb'))\n"
-        "h:write(s)\nh:close()"
+        "assert(h:write(s))\nassert(h:close())"
     )
-    r = subprocess.run([lua_exe, "-e", script, str(src), str(dst)],
-                       capture_output=True, text=True)
+    r = run_lua_helper(lua_exe, script, src, dst)
     if r.returncode != 0:
         raise SystemExit(
             f"::error::strip 编译失败 {src}: {r.stderr.strip()}")
@@ -109,7 +120,6 @@ def enc_apk(src, dst, key, lua_exe=None):
     """把 APK 内每个 *.lua 条目替换成密文，其余条目原样复制。
     传 lua_exe 时先 strip 编译成字节码再加密（阶段 A）；否则直接加密文本。
     返回改写条数。"""
-    import tempfile
     n = 0
     with zipfile.ZipFile(src, "r") as zin, \
          zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
@@ -134,8 +144,12 @@ def enc_apk(src, dst, key, lua_exe=None):
     return n
 
 
-def verify_apk(apk, key):
-    """断言 APK 内每个 *.lua 都是密文、且能解回合法内容。失败抛异常。"""
+def verify_apk(apk, key, lua_exe=None):
+    """检查每个 *.lua 的密文头、排除重复加密。
+
+    传 lua_exe 时还经 C 解密入口加载并解析每个脚本，不执行脚本。
+    格式及解析检查不等于载荷完整性认证，也不验证运行时依赖。
+    """
     total = 0
     with zipfile.ZipFile(apk, "r") as z:
         for name in z.namelist():
@@ -149,9 +163,20 @@ def verify_apk(apk, key):
             pt = decrypt(data, key)
             if is_encrypted(pt, key):
                 raise SystemExit(f"::error::{name} 解密后仍像密文（重复加密？）")
+            if lua_exe:
+                with tempfile.TemporaryDirectory() as td:
+                    encrypted = pathlib.Path(td) / "chunk.lua"
+                    encrypted.write_bytes(data)
+                    r = run_lua_helper(lua_exe,
+                                       "assert(loadfile(arg[1]))", encrypted)
+                if r.returncode != 0:
+                    raise SystemExit(
+                        f"::error::{name} 无法由设备同源 Lua 解密并解析: "
+                        f"{r.stderr.strip()}")
     if total == 0:
         raise SystemExit("::error::APK 里一个 .lua 都没有，加密步骤可能没生效")
-    print(f"校验通过：APK 内 {total} 个 .lua 全部为密文且可解密")
+    detail = "且由设备同源 Lua 解密并解析通过" if lua_exe else "（未验证 Lua 内容）"
+    print(f"校验通过：APK 内 {total} 个 .lua 密文格式有效{detail}")
 
 
 def selftest(key):
@@ -180,7 +205,7 @@ def main(argv):
         data = pathlib.Path(argv[2]).read_bytes()
         pathlib.Path(argv[3]).write_bytes(encrypt(data, key))
         print(f"加密 {argv[2]} -> {argv[3]}"); return 0
-    if cmd == "enc-apk":
+    if cmd in ("enc-apk", "verify-apk"):
         lua_exe = None
         rest = argv[2:]
         if "--lua" in rest:
@@ -189,14 +214,17 @@ def main(argv):
                 raise SystemExit("--lua 需要参数（host lua 可执行文件路径）")
             lua_exe = rest[i + 1]
             rest = rest[:i] + rest[i + 2:]
+        if cmd == "verify-apk":
+            if len(rest) != 1:
+                raise SystemExit("用法：pack.py verify-apk <apk> [--lua <host-lua>]")
+            verify_apk(rest[0], key, lua_exe)
+            return 0
         if len(rest) != 2:
             raise SystemExit("用法：pack.py enc-apk <in.apk> <out> [--lua <host-lua>]")
         n = enc_apk(rest[0], rest[1], key, lua_exe)
         mode = "strip 编译后加密" if lua_exe else "直接加密"
         print(f"改写 {n} 个 .lua 条目（{mode}）：{rest[0]} -> {rest[1]}")
         return 0
-    if cmd == "verify-apk":
-        verify_apk(argv[2], key); return 0
     print(__doc__); return 1
 
 

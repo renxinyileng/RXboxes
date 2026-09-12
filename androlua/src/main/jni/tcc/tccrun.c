@@ -33,7 +33,7 @@ ST_DATA void *rt_prog_main;
 #define ucontext_t CONTEXT
 #endif
 
-static void set_pages_executable(void *ptr, unsigned long length);
+static int set_pages_executable(void *ptr, unsigned long length);
 static void set_exception_handler(void);
 static int rt_get_caller_pc(addr_t *paddr, ucontext_t *uc, int level);
 static void rt_error(ucontext_t *uc, const char *fmt, ...);
@@ -193,13 +193,19 @@ static int tcc_relocate_ex(TCCState *s1, void *ptr)
         else
             memcpy(ptr, s->data, length);
         /* mark executable sections as executable in memory */
-        if (s->sh_flags & SHF_EXECINSTR)
-            set_pages_executable(ptr, length);
+        if ((s->sh_flags & SHF_EXECINSTR) &&
+            set_pages_executable(ptr, length) < 0) {
+            tcc_error_noabort("could not make generated code executable");
+            return -1;
+        }
     }
 
 #ifdef TCC_HAS_RUNTIME_PLTGOT
-    set_pages_executable(s1->runtime_plt_and_got,
-                         s1->runtime_plt_and_got_offset);
+    if (set_pages_executable(s1->runtime_plt_and_got,
+                             s1->runtime_plt_and_got_offset) < 0) {
+        tcc_error_noabort("could not make generated code executable");
+        return -1;
+    }
 #endif
 
 #ifdef _WIN64
@@ -211,20 +217,26 @@ static int tcc_relocate_ex(TCCState *s1, void *ptr)
 /* ------------------------------------------------------------- */
 /* allow to run code in memory */
 
-static void set_pages_executable(void *ptr, unsigned long length)
+static int set_pages_executable(void *ptr, unsigned long length)
 {
+    if (length == 0)
+        return 0;
 #ifdef _WIN32
     unsigned long old_protect;
-    VirtualProtect(ptr, length, PAGE_EXECUTE_READWRITE, &old_protect);
+    return VirtualProtect(ptr, length, PAGE_EXECUTE_READWRITE,
+                          &old_protect) ? 0 : -1;
 #else
-#ifndef PAGESIZE
-# define PAGESIZE 4096
-#endif
+    long page_size = sysconf(_SC_PAGESIZE);
     addr_t start, end;
-    start = (addr_t)ptr & ~(PAGESIZE - 1);
+    if (page_size <= 0)
+        return -1;
+    start = (addr_t)ptr - (addr_t)ptr % (addr_t)page_size;
     end = (addr_t)ptr + length;
-    end = (end + PAGESIZE - 1) & ~(PAGESIZE - 1);
-    mprotect((void *)start, end - start, PROT_READ | PROT_WRITE | PROT_EXEC);
+    if (end < (addr_t)ptr || end > (addr_t)-1 - (addr_t)page_size + 1)
+        return -1;
+    end = (end + page_size - 1) / page_size * page_size;
+    return mprotect((void *)start, end - start,
+                    PROT_READ | PROT_WRITE | PROT_EXEC);
 #endif
 }
 
