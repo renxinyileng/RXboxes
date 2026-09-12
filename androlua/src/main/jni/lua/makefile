@@ -70,7 +70,10 @@ LOCAL = $(TESTS) $(CWARNS)
 
 
 # enable Linux goodies
-MYCFLAGS= $(LOCAL) -std=c99 -DLUA_USE_LINUX -DLUA_USE_READLINE
+# -D_GNU_SOURCE：宿主机 glibc 在 -std=c99 下会隐藏 POSIX/BSD 声明
+# （clock_gettime/CLOCK_MONOTONIC —— luaanti.c；st_mtim/st_atim —— liolib.c），
+# 开这个宏一次性暴露，设备端 bionic 默认已有、无副作用。
+MYCFLAGS= $(LOCAL) -std=c99 -D_GNU_SOURCE -DLUA_USE_LINUX -DLUA_USE_READLINE
 MYLDFLAGS= $(LOCAL) -Wl,-E
 MYLIBS= -ldl -lreadline
 

@@ -23,6 +23,22 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 API="${API:-23}"                       # 与工程 minSdk 保持一致
 
+# ---- 体积优化（现代做法）----------------------------------------------------
+# SECFLAGS：把每个函数/数据放进独立 section，最终链接时 -Wl,--gc-sections 就能
+#           逐函数丢弃未被引用的代码。对本项目收益最大——OpenSSL/aria2 静态库里
+#           大量函数我们根本用不到，不分段的话链接器只能按 .o 整体保留。
+# OPTFLAGS：依赖改用 clang 的体积优先码生成 -Oz。下载核心是 IO 密集，
+#           OpenSSL 的性能热点是手写汇编（不受 C 优化级别影响），故安全。
+SECFLAGS="-ffunction-sections -fdata-sections"
+OPTFLAGS="${OPTFLAGS:--Oz}"
+# 最终链接期的体积优化：
+#   --gc-sections    丢弃未引用的 section（需上面的 SECFLAGS 才有效）
+#   --exclude-libs,ALL 把所有静态库符号变 local：既不导出、又让 gc 能回收，
+#                    同时 .dynsym 大幅变小。JNI 导出来自直接编译的 aria2jni.cpp
+#                    （不在任何 .a 里），不受影响，仍正常导出
+#   --icf=all        合并逐字节相同的函数（C++ 模板实例化会产生大量重复）
+LINK_SIZE_FLAGS="-Wl,--gc-sections -Wl,--exclude-libs,ALL -Wl,--icf=all"
+
 ARIA2_ENGINE="${ARIA2_ENGINE:-next}"
 case "$ARIA2_ENGINE" in
   upstream)
@@ -151,7 +167,7 @@ build_autotools_dep() {
     cd "$b"
     # 这些静态库最终要链进 libaria2jni.so，必须是位置无关代码。
     # --disable-shared 会让 libtool 只编 .o 的非 PIC 版本，所以要显式给 -fPIC。
-    CFLAGS="-fPIC -O2" CXXFLAGS="-fPIC -O2" \
+    CFLAGS="-fPIC $OPTFLAGS $SECFLAGS" CXXFLAGS="-fPIC $OPTFLAGS $SECFLAGS" \
     "$WORK/$dir/configure" --host="$host" --prefix="$prefix" \
       --disable-shared --enable-static --with-pic "$@"
     make -j"$(nproc)"
@@ -169,7 +185,7 @@ build_deps() {
       cd "$WORK/build-openssl-$abi"
       # 静态库最终要链进 libaria2jni.so，所有目标文件都必须是位置无关代码
       ANDROID_NDK_ROOT="$ANDROID_NDK" ./Configure "$(openssl_target "$abi")" \
-        -D__ANDROID_API__="$api" -fPIC \
+        -D__ANDROID_API__="$api" -fPIC $SECFLAGS \
         no-shared no-module no-tests no-ui-console \
         --prefix="$prefix" --openssldir="$prefix/ssl"
       make -j"$(nproc)" build_libs
@@ -189,7 +205,7 @@ build_deps() {
     (
       cd "$WORK/build-zlib-$abi"
       # zlib 的 configure 不认 --host，靠环境变量指定交叉编译器
-      CC="$CC" AR="$AR" RANLIB="$RANLIB" CFLAGS="-fPIC -O2" \
+      CC="$CC" AR="$AR" RANLIB="$RANLIB" CFLAGS="-fPIC $OPTFLAGS $SECFLAGS" \
         ./configure --prefix="$prefix" --static
       make -j"$(nproc)"
       make install
@@ -224,8 +240,8 @@ build_aria2_autotools() {
     OPENSSL_CFLAGS="-I$prefix/include" \
     OPENSSL_LIBS="-L$prefix/lib -lssl -lcrypto" \
     CPPFLAGS="-I$prefix/include" \
-    CFLAGS="-fPIC -O2" \
-    CXXFLAGS="-fPIC -O2" \
+    CFLAGS="-fPIC $OPTFLAGS $SECFLAGS" \
+    CXXFLAGS="-fPIC $OPTFLAGS $SECFLAGS" \
     LDFLAGS="-L$prefix/lib" \
     "$WORK/aria2/configure" \
       --host="$host" \
@@ -262,8 +278,8 @@ build_aria2_cmake() {
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_SHARED_LIBS=OFF \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DCMAKE_C_FLAGS="-fPIC -O2" \
-    -DCMAKE_CXX_FLAGS="-fPIC -O2" \
+    -DCMAKE_C_FLAGS="-fPIC $OPTFLAGS $SECFLAGS" \
+    -DCMAKE_CXX_FLAGS="-fPIC $OPTFLAGS $SECFLAGS" \
     -DARIA2_ENABLE_LIBARIA2=ON \
     -DARIA2_ENABLE_SSL=ON \
     -DARIA2_ENABLE_BITTORRENT=ON \
@@ -365,7 +381,7 @@ build_abi() {
 
   # -Wl,--no-undefined 同时是 API 级别的守卫：NDK 链的是 API $api 的 stub 库，
   # 任何更高 API 才有的符号会在链接期失败，而不是在用户手机上崩溃
-  "$CXX" -shared -fPIC -O2 "$cxxstd" \
+  "$CXX" -shared -fPIC $OPTFLAGS $SECFLAGS "$cxxstd" \
     -I"$prefix/include" \
     "$HERE/aria2jni.cpp" \
     "$prefix/lib/libaria2.a" \
@@ -374,6 +390,7 @@ build_abi() {
     "${zlib_link[@]}" \
     -llog -lm -ldl -static-libstdc++ \
     -Wl,--no-undefined \
+    $LINK_SIZE_FLAGS \
     -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 \
     -o "$OUT/$abi/libaria2jni.so"
   "$STRIP" --strip-unneeded "$OUT/$abi/libaria2jni.so"

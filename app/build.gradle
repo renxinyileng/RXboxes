@@ -96,3 +96,77 @@ dependencies {
     // 4.x 起这些方法被 Kotlin 属性取代，Java/Lua 侧无法调用。
     implementation "com.squareup.okhttp3:okhttp:$rootProject.ext.okhttp_version"
 }
+
+// ---------------------------------------------------------------------------
+// 本地打包自动加密 Lua 脚本
+//
+// assembleRelease 之后，对产出的 release APK 把所有 .lua 条目改写成密文
+//（用 native/luaenc/pack.py，与 CI、与设备端 luaenc.c 同算法同密钥）。
+// 选在 APK 层做而不是 sourceSet 层：构建 app 时 AGP 会把 androlua 模块的
+// resources/lua 也并进最终 APK，只有在 APK 层改写才能把各模块的 .lua 一网打尽。
+//
+// Gradle 9 已移除 Project.exec / Task.exec，命令行只能走注入的 ExecOperations，
+// 所以这里用带 @Inject 的自定义任务类型，而不是 tasks.register{ doLast{ exec{} } }。
+//
+// 安全性：
+//   - pack.py 幂等（已加密的按 tag 认出、跳过），CI 里签名前还有一道 enc-apk +
+//     verify-apk，本 task 先跑到只是让那一步变成空操作，双保险不冲突。
+//   - pack.py 若发现 APK 已带签名块会直接拒绝（改写会破坏签名），所以只处理
+//     未签名的 release 产物；本地若配了 signingConfig 签了名，这里会跳过并告警，
+//     绝不损坏已签名包。正常本地流程是产未签名包→加密→再签名，与 CI 一致。
+//   - 缺 python3 时只告警、不失败（本地照常出包，只是没加密；CI 有 python3）。
+//
+// CI 里不跑本 task：android.yml 有专门的一步，会先构建 host lua 把 .lua
+// strip 编译成字节码再加密（更强）。本 task 若在 CI 抢先做文本加密，enc_apk
+// 幂等会让那一步跳过、把产物从"加密字节码"降级成"加密源码"。所以检测到
+// CI=true 直接跳过，交给 CI 的专用步骤。本地则尽量也走字节码：若 host lua
+// 已编出（androlua/src/main/jni/lua/lua 存在）就传 --lua，否则退化为文本加密。
+abstract class EncryptReleaseLuaTask extends DefaultTask {
+    @javax.inject.Inject abstract org.gradle.process.ExecOperations getExecOps()
+
+    @Internal abstract Property<String> getPackPyPath()
+    @Internal abstract Property<String> getApkDirPath()
+    @Internal abstract Property<String> getLuaExePath()
+
+    @TaskAction
+    void run() {
+        if (System.getenv("CI") == "true") {
+            logger.lifecycle("luaenc: CI 环境，跳过（由 android.yml 的字节码加密步骤处理）")
+            return
+        }
+        def packPy = new File(packPyPath.get())
+        def apkDir = new File(apkDirPath.get())
+        if (!packPy.exists()) { logger.warn("luaenc: 找不到 ${packPy}，跳过"); return }
+        if (!apkDir.exists()) { logger.warn("luaenc: 找不到 ${apkDir}，跳过"); return }
+        def apks = apkDir.listFiles()?.findAll { it.name.endsWith(".apk") } ?: []
+        if (apks.isEmpty()) { logger.warn("luaenc: release 目录下没有 apk，跳过"); return }
+        def luaExe = new File(luaExePath.get())
+        def useBytecode = luaExe.exists()
+        logger.lifecycle(useBytecode
+            ? "luaenc: 检测到 host lua，将 strip 编译成字节码再加密"
+            : "luaenc: 未找到 host lua（${luaExe}），退化为文本加密")
+        apks.each { apk ->
+            def tmp = new File(apk.parentFile, apk.name + ".enc.tmp")
+            def result = execOps.exec { spec ->
+                def cmd = ["python3", packPy.absolutePath, "enc-apk", apk.absolutePath, tmp.absolutePath]
+                if (useBytecode) cmd += ["--lua", luaExe.absolutePath]
+                spec.commandLine cmd
+                spec.ignoreExitValue = true
+            }
+            if (result.exitValue == 0 && tmp.exists()) {
+                apk.delete(); tmp.renameTo(apk)
+                logger.lifecycle("luaenc: 已加密 ${apk.name}")
+            } else {
+                tmp.delete()
+                logger.warn("luaenc: 跳过 ${apk.name}（可能已签名，或缺 python3；退出码 ${result.exitValue}）")
+            }
+        }
+    }
+}
+tasks.register("encryptReleaseLua", EncryptReleaseLuaTask) {
+    description = "把 release APK 内的 .lua 改写成密文（本地打包自动加密）"
+    packPyPath.set("${rootProject.projectDir}/native/luaenc/pack.py".toString())
+    apkDirPath.set(layout.buildDirectory.dir("outputs/apk/release").get().asFile.absolutePath)
+    luaExePath.set("${rootProject.projectDir}/androlua/src/main/jni/lua/lua".toString())
+}
+tasks.matching { it.name == "assembleRelease" }.configureEach { finalizedBy("encryptReleaseLua") }
