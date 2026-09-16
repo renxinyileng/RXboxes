@@ -14,13 +14,15 @@ Lua 脚本打包加密器。与设备端 androlua/src/main/jni/lua/luaenc.c 同�
   pack.py verify-apk <apk> [--lua <host-lua>]
                                    检查密文格式；传 --lua 时逐个解密并解析
 """
-import hashlib, os, re, subprocess, sys, zipfile, pathlib, tempfile
+import copy, hashlib, hmac, os, re, subprocess, sys, zipfile, pathlib, tempfile
 
-# 无明文魔数：头 = nonce(8) + tag(8)，tag = SHA256(KEY||nonce)[:8]。
-# 没有 KEY 就算不出 tag，所以文件头对外看是随机字节、grep 不到签名。
-NONCE_LEN = 8
-TAG_LEN = 8
-HEADER_LEN = 16
+# v2 先认证再解密；标识包含版本，未知版本/损坏密文不能退回明文处理。
+MAGIC = b"\x1bLENC\x02\r\n"
+PREFIX = MAGIC[:5]
+NONCE_LEN = 12
+TAG_LEN = 32
+HEADER_LEN = len(MAGIC) + NONCE_LEN + TAG_LEN
+LEGACY_HEADER_LEN = 16
 
 _HERE = pathlib.Path(__file__).resolve().parent
 _LUAENC_C = _HERE.parent.parent / "androlua/src/main/jni/lua/luaenc.c"
@@ -73,8 +75,34 @@ def load_key(path=_LUAENC_C):
 
 
 def _tag(key, nonce):
-    # SHA256(KEY||nonce)[:8]，作"是否本方案加密"的判据 + 密钥校验，与密码算法无关
-    return hashlib.sha256(key + nonce).digest()[:TAG_LEN]
+    # 仅供旧格式兼容识别；旧 tag 不认证载荷，不能用于新包。
+    return hashlib.sha256(key + nonce).digest()[:8]
+
+
+def _subkey(key, purpose):
+    if len(key) != 32:
+        raise ValueError("Lua 加密密钥必须为 32 字节")
+    return hmac.digest(key, purpose, "sha256")
+
+
+def _auth_tag(key, header, ciphertext):
+    mac = hmac.new(_subkey(key, b"LUAENC2-MAC"), header, "sha256")
+    mac.update(ciphertext)
+    return mac.digest()
+
+
+def _is_legacy(data, key):
+    return (len(data) >= LEGACY_HEADER_LEN and
+            hmac.compare_digest(_tag(key, data[:8]), data[8:16]))
+
+
+def _verify_v2(data, key):
+    if len(data) < HEADER_LEN or data[:len(MAGIC)] != MAGIC:
+        raise ValueError("Lua 密文头被截断或版本不支持")
+    tag_offset = len(MAGIC) + NONCE_LEN
+    expected = _auth_tag(key, data[:tag_offset], data[HEADER_LEN:])
+    if not hmac.compare_digest(expected, data[tag_offset:HEADER_LEN]):
+        raise ValueError("Lua 密文完整性认证失败（内容损坏或密钥不匹配）")
 
 
 # ---- AES-256（纯 Python，无外部依赖）----
@@ -122,8 +150,9 @@ def _aes_key_expansion(key):
     return bytes(rk)
 
 
-def _aes_encrypt_block(key, blk):
-    rk = _aes_key_expansion(key)
+def _aes_encrypt_block(key, blk, rk=None):
+    if rk is None:
+        rk = _aes_key_expansion(key)
     s = bytearray(blk)              # 列主序：(行 r, 列 c) = s[r + 4c]
     for k in range(16):
         s[k] ^= rk[k]
@@ -148,38 +177,59 @@ def _aes_encrypt_block(key, blk):
 
 
 def _xor_ctr(key, nonce, data):
-    # AES-256-CTR：块 j 的密钥流 = AES(key, nonce(8) || u64_be(j))，逐 16 字节异或。
-    # 与设备端 luaenc.c 的 keystream_block 完全一致。
+    # v2: nonce(12) || u32_be(j)；兼容 v1: nonce(8) || u64_be(j)。
+    if len(nonce) not in (8, NONCE_LEN):
+        raise ValueError("Lua 加密 nonce 长度不合法")
+    counter_len = 16 - len(nonce)
+    if (len(data) + 15) // 16 > 1 << (counter_len * 8):
+        raise ValueError("Lua 密文过长，CTR 计数器会溢出")
     out = bytearray(len(data))
+    rk = _aes_key_expansion(key)  # 每个文件仅展开一次密钥
     ks = b""
     for i in range(len(data)):
         if i % 16 == 0:
-            ctr = nonce + (i // 16).to_bytes(8, "big")
-            ks = _aes_encrypt_block(key, ctr)
+            ctr = nonce + (i // 16).to_bytes(counter_len, "big")
+            ks = _aes_encrypt_block(key, ctr, rk)
         out[i] = data[i] ^ ks[i % 16]
     return bytes(out)
 
 
 def is_encrypted(data, key=None):
-    # 判据 = tag 校验。没有 key 无法判定（对外即"看不出"），此时保守返回 False
-    if key is None or len(data) < HEADER_LEN:
+    """仅有效密文返回 True；v2 校验完整载荷，v1 仅用于迁移识别。"""
+    if key is None:
         return False
-    return _tag(key, data[:NONCE_LEN]) == data[NONCE_LEN:HEADER_LEN]
+    if data.startswith(PREFIX):
+        try:
+            _verify_v2(data, key)
+            return True
+        except ValueError:
+            return False
+    return _is_legacy(data, key)
 
 
 def encrypt(data, key, nonce=None):
-    if is_encrypted(data, key):     # 幂等：已加密的原样返回
+    if data.startswith(PREFIX):
+        _verify_v2(data, key)  # 损坏密文必须报错，不能被当成源码重新包裹
         return data
+    if _is_legacy(data, key):
+        data = decrypt(data, key)  # 旧包再次打包时升级完整性认证
     if nonce is None:
         nonce = os.urandom(NONCE_LEN)
-    return nonce + _tag(key, nonce) + _xor_ctr(key, nonce, data)
+    if len(nonce) != NONCE_LEN:
+        raise ValueError("v2 nonce 必须为 12 字节")
+    header = MAGIC + nonce
+    ciphertext = _xor_ctr(_subkey(key, b"LUAENC2-ENC"), nonce, data)
+    return header + _auth_tag(key, header, ciphertext) + ciphertext
 
 
 def decrypt(data, key):
-    if not is_encrypted(data, key):
-        return data
-    nonce = data[:NONCE_LEN]
-    return _xor_ctr(key, nonce, data[HEADER_LEN:])
+    if data.startswith(PREFIX):
+        _verify_v2(data, key)  # 在产生任何明文之前认证
+        nonce = data[len(MAGIC):len(MAGIC) + NONCE_LEN]
+        return _xor_ctr(_subkey(key, b"LUAENC2-ENC"), nonce, data[HEADER_LEN:])
+    if _is_legacy(data, key):
+        return _xor_ctr(key, data[:8], data[LEGACY_HEADER_LEN:])
+    return data
 
 
 def run_lua_helper(lua_exe, script, *args):
@@ -211,57 +261,97 @@ def strip_compile(lua_exe, src, dst):
             f"::error::strip 编译失败 {src}: {r.stderr.strip()}")
 
 
+def _check_archive(archive):
+    """重复条目会导致校验对象与 Android 实际加载对象不一致。"""
+    names = archive.namelist()
+    if len(names) != len(set(names)):
+        raise SystemExit("::error::APK 含重名 ZIP 条目，拒绝加密或校验")
+
+
+def _check_unsigned(src, archive):
+    # 在中央目录之前定位 APK Signing Block；脚本内的同名字符串不是签名。
+    if archive.start_dir >= 24:
+        with open(src, "rb") as handle:
+            handle.seek(archive.start_dir - 24)
+            footer = handle.read(24)
+        if footer[8:] == b"APK Sig Block 42":
+            raise SystemExit(f"::error::{src} 已签名，加密会破坏签名——请在签名前加密")
+    # v1 JAR 签名同样覆盖 Lua 条目，改写也会使其失效。
+    for name in archive.namelist():
+        upper = name.upper()
+        if upper.startswith("META-INF/") and upper.endswith((".SF", ".RSA", ".DSA", ".EC")):
+            raise SystemExit(f"::error::{src} 含 v1 签名，请在签名前加密")
+
+
 def enc_apk(src, dst, key, lua_exe=None):
     """把 APK 内每个 *.lua 条目替换成密文，其余条目原样复制。
     传 lua_exe 时先 strip 编译成字节码再加密（阶段 A）；否则直接加密文本。
     返回改写条数。
 
-    安全护栏：若 APK 已带 v2/v3 签名块（"APK Sig Block 42"），改写会破坏签名，
-    直接拒绝。所以本步必须在签名之前跑（CI 里就是签名前）。"""
-    if b"APK Sig Block 42" in pathlib.Path(src).read_bytes():
-        raise SystemExit(f"::error::{src} 已签名，加密会破坏签名——请在签名前加密")
+    拒绝已签名 APK；在同目录临时文件中完成加密与校验后原子替换目标，
+    编译/认证/写入失败时保留原文件，也支持 src 与 dst 相同。"""
     n = 0
-    with zipfile.ZipFile(src, "r") as zin, \
-         zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename.endswith(".lua") and not is_encrypted(data, key):
-                if lua_exe:
-                    with tempfile.TemporaryDirectory() as td:
-                        # 以 APK 内条目为输入：先落盘再编译，避免路径/编码问题
-                        srcp = pathlib.Path(td) / "in.lua"
-                        srcp.write_bytes(data)
-                        tmp = pathlib.Path(td) / "out.luac"
-                        strip_compile(lua_exe, srcp, tmp)
-                        data = tmp.read_bytes()
-                data = encrypt(data, key)
-                n += 1
-            # 保留原压缩方式：STORED 的（如已对齐的 so）不要改成 DEFLATED
-            zi = zipfile.ZipInfo(item.filename, date_time=item.date_time)
-            zi.compress_type = item.compress_type
-            zi.external_attr = item.external_attr
-            zout.writestr(zi, data)
+    dst = pathlib.Path(dst)
+    temporary = None
+    try:
+        with zipfile.ZipFile(src, "r") as zin:
+            _check_archive(zin)
+            _check_unsigned(src, zin)
+            fd, temporary = tempfile.mkstemp(prefix=dst.name + ".", suffix=".tmp", dir=dst.parent)
+            os.close(fd)
+            with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as zout:
+                zout.comment = zin.comment
+                for item in zin.infolist():
+                    data = zin.read(item)
+                    if not item.is_dir() and item.filename.endswith(".lua"):
+                        try:
+                            if data.startswith(PREFIX):
+                                _verify_v2(data, key)
+                            else:
+                                data = decrypt(data, key)
+                                if lua_exe:
+                                    with tempfile.TemporaryDirectory() as td:
+                                        srcp = pathlib.Path(td) / "in.lua"
+                                        srcp.write_bytes(data)
+                                        compiled = pathlib.Path(td) / "out.luac"
+                                        strip_compile(lua_exe, srcp, compiled)
+                                        data = compiled.read_bytes()
+                                data = encrypt(data, key)
+                                n += 1
+                        except (ValueError, SystemExit) as error:
+                            raise SystemExit(f"::error::{item.filename}: {error}") from error
+                    # 保留压缩方式、条目注释、权限和额外字段；签名前仍须 zipalign。
+                    zout.writestr(copy.copy(item), data)
+        verify_apk(temporary, key, lua_exe)
+        os.replace(temporary, dst)
+    finally:
+        if temporary is not None and os.path.exists(temporary):
+            os.unlink(temporary)
     return n
 
 
 def verify_apk(apk, key, lua_exe=None):
-    """检查每个 *.lua 的密文头、排除重复加密。
+    """认证每个 *.lua 的完整 v2 密文、排除重复加密。
 
     传 lua_exe 时还经 C 解密入口加载并解析每个脚本，不执行脚本。
-    格式及解析检查不等于载荷完整性认证，也不验证运行时依赖。
+    仅解析而不执行，不能验证 Android API 等运行时依赖。
     """
     total = 0
     with zipfile.ZipFile(apk, "r") as z:
-        for name in z.namelist():
-            if not name.endswith(".lua"):
+        _check_archive(z)
+        for item in z.infolist():
+            name = item.filename
+            if item.is_dir() or not name.endswith(".lua"):
                 continue
             total += 1
             data = z.read(name)
-            if not is_encrypted(data, key):
-                raise SystemExit(f"::error::{name} 在 APK 里仍是明文（未加密）")
-            # 解回来的明文不应再通过 tag 校验（即确实是原始脚本，非重复加密）
-            pt = decrypt(data, key)
-            if is_encrypted(pt, key):
+            if not data.startswith(PREFIX):
+                raise SystemExit(f"::error::{name} 未使用 v2 认证加密（明文或旧格式）")
+            try:
+                pt = decrypt(data, key)
+            except ValueError as error:
+                raise SystemExit(f"::error::{name}: {error}") from error
+            if pt.startswith(PREFIX) or is_encrypted(pt, key):
                 raise SystemExit(f"::error::{name} 解密后仍像密文（重复加密？）")
             if lua_exe:
                 with tempfile.TemporaryDirectory() as td:
@@ -276,21 +366,32 @@ def verify_apk(apk, key, lua_exe=None):
     if total == 0:
         raise SystemExit("::error::APK 里一个 .lua 都没有，加密步骤可能没生效")
     detail = "且由设备同源 Lua 解密并解析通过" if lua_exe else "（未验证 Lua 内容）"
-    print(f"校验通过：APK 内 {total} 个 .lua 密文格式有效{detail}")
+    print(f"校验通过：APK 内 {total} 个 .lua 完整性认证有效{detail}")
 
 
 def selftest(key):
     import random
-    random.seed(0)
+    generator = random.Random(0)
     ok = True
+    # FIPS-197 AES-256 已知答案，避免两端实现同错却互相 round-trip 成功。
+    assert _aes_encrypt_block(bytes(range(32)), bytes.fromhex(
+        "00112233445566778899aabbccddeeff")) == bytes.fromhex(
+        "8ea2b7ca516745bfeafc49904b496089")
     for size in (0, 1, 31, 32, 33, 100, 4096, 100000):
-        pt = bytes(random.getrandbits(8) for _ in range(size))
+        pt = bytes(generator.getrandbits(8) for _ in range(size))
         ct = encrypt(pt, key)
         assert is_encrypted(ct, key), "tag 校验失败"
         assert decrypt(ct, key) == pt, f"round-trip 失败 size={size}"
         # 幂等
         assert encrypt(ct, key) == ct, "重复加密不幂等"
-    print(f"selftest OK（密钥 {key.hex()[:16]}…，8 组尺寸全部 round-trip 通过）")
+        for damaged in (ct[:-1], ct[:20] + bytes([ct[20] ^ 1]) + ct[21:], ct + b"x"):
+            try:
+                decrypt(damaged, key)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("损坏密文未被拒绝")
+    print("selftest OK（AES-256 已知答案、8 组尺寸往返及篡改检测通过）")
     return ok
 
 
@@ -302,6 +403,8 @@ def main(argv):
     if cmd == "selftest":
         selftest(key); return 0
     if cmd == "enc-file":
+        if len(argv) != 4:
+            raise SystemExit("用法：pack.py enc-file <in> <out>")
         data = pathlib.Path(argv[2]).read_bytes()
         pathlib.Path(argv[3]).write_bytes(encrypt(data, key))
         print(f"加密 {argv[2]} -> {argv[3]}"); return 0

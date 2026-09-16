@@ -13,11 +13,13 @@
 
 #include <stddef.h>
 
-/* 缓冲区是否带 LENC 魔数头（即是否为本方案加密过的内容） */
+/* 识别加密候选：v2 的完整 ESC LENC 前缀（包括截断头/未知版本），
+ * 或旧格式的匹配 tag。候选不代表认证成功，必须继续调用 decrypt。 */
 int luaEnc_isEncrypted(const unsigned char *p, size_t n);
 
 /* 解密。成功返回 malloc 出来的明文（调用方负责 free），*outn 为明文长度；
- * 失败（头不合法/长度不够/内存不足）返回 NULL。 */
+ * 失败（头不合法/认证失败/长度不够/内存不足）返回 NULL，并清零 *outn。
+ * v2 先认证再解密；旧格式兼容读取，但不能检测密文篡改。 */
 unsigned char *luaEnc_decrypt(const unsigned char *in, size_t n, size_t *outn);
 
 /* 字节码常量池载荷盐（8 字节循环掩码）。ldump.c 写时异或、

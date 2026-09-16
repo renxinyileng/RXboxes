@@ -1,22 +1,16 @@
 /*
  * luaenc —— 见 luaenc.h。
  *
- * 密文格式（无明文魔数，整头对没有密钥的人来说与随机字节不可区分）：
- *   nonce[8] = 打包时随机生成（明文存放，仅用于让每个文件密钥流独立，
- *              避免"同一密钥流异或两份密文抵消"这类攻击）
- *   tag[8]   = SHA256(KEY || nonce) 的前 8 字节 —— 既当"是不是本方案加密的"
- *              判据，又顺带校验密钥/完整性。没有 KEY 就算不出 tag，
- *              所以文件头看不出任何固定特征、也 grep 不到签名
- *   ct[...]  = 明文 XOR AES-256-CTR 密钥流
+ * v2 格式：magic[8] + nonce[12] + tag[32] + ct；magic 为 ESC LENC 02 CR LF。
+ * 加密密钥 = HMAC-SHA256(master, "LUAENC2-ENC")，
+ * 认证密钥 = HMAC-SHA256(master, "LUAENC2-MAC")，两者分离使用。
+ * ct 使用 AES-256-CTR，计数器为 nonce[12] || u32_be(j)，j 从 0 开始；
+ * tag = HMAC-SHA256(认证密钥, magic || nonce || ct)，认证成功才解密。
+ * 保留旧 nonce[8] + SHA256(master || nonce)[:8] + ct 格式的读取兼容；
+ * 旧 tag 只识别密钥及格式，不能检测密文篡改，新打包不再生成旧格式。
  *
- * 密钥流：AES-256-CTR。key = 拆分方案重组出的 32 字节；
- *   block_j(16B) = AES256_encrypt(key, nonce(8) || u64_be(j))   j = 0,1,2,...
- *   明文[i] = 密文[i] XOR (block_{i/16})[i%16]
- * 与 pack.py 的 cryptography AES-CTR(iv = nonce || 0^8) 逐块一致（CTR 把 16
- * 字节计数器当大端整数递增，低 8 字节从 0 起即 j，高 8 字节恒为 nonce）。
- *
- * tag 仍用 SHA-256(KEY||nonce)[:8] 作"是否本方案加密"的判据 + 密钥校验，
- * 与密码算法无关。内置公有领域 SHA-256 与 AES-256，两端逐位对齐、无外部依赖。
+ * 密钥随应用分发，仍属于提高逆向成本的混淆防护；认证不能阻止持有密钥的
+ * 攻击者重新制作脚本。内置 SHA-256 与 AES-256，与 pack.py 对齐、无外部依赖。
  */
 #include "luaenc.h"
 
@@ -107,7 +101,7 @@ unsigned char luaEnc_stage1(int i, unsigned char zero) {
  * 结果逐位一致；设备端额外做碎片化 / MBA / 防折叠混淆，不改变结果）：
  *   阶段一：j = P[i]; s[i] = rotl8( ((A[j]^B[j])+C[j])&0xff , R[j]&7 )
  *   阶段二（CBC 式链式白化）：prev = 0xA5; out[i] = s[i]^W[i]^prev; prev = out[i]
- * 成品密钥用完由调用方立即擦除（keystream_block / compute_tag 均 wipe）。 */
+ * 成品密钥及派生密钥用完由调用方立即擦除。 */
 static void luaEnc_getKey(unsigned char out[32]) {
   unsigned char s[32];
   unsigned char prev;
@@ -134,9 +128,16 @@ void luaEnc_wipe(void *p, size_t n) {
   while (n--) *v++ = 0;
 }
 
-#define LUAENC_NONCE_LEN  8
-#define LUAENC_TAG_LEN    8
-#define LUAENC_HEADER_LEN 16   /* nonce(8) + tag(8)，无明文魔数 */
+#define LUAENC_V1_NONCE_LEN  8
+#define LUAENC_V1_TAG_LEN    8
+#define LUAENC_V1_HEADER_LEN 16
+#define LUAENC_MAGIC_LEN     8
+#define LUAENC_NONCE_LEN    12
+#define LUAENC_TAG_LEN      32
+#define LUAENC_HEADER_LEN   52
+static const unsigned char LUAENC_MAGIC[LUAENC_MAGIC_LEN] = {
+    0x1b, 'L', 'E', 'N', 'C', 2, '\r', '\n'
+};
 
 /* ------------------------------- SHA-256 ------------------------------- */
 typedef struct {
@@ -160,10 +161,11 @@ static const uint32_t SHA256_K[64] = {
 };
 
 static void sha256_transform(sha256_ctx *c, const unsigned char *d) {
-    uint32_t a,b,e,f,g,h,hh,t1,t2,m[64];
+    uint32_t a,b,e,f,g,h,hh,t1,m[64];
     int i,j;
     for (i = 0, j = 0; i < 16; ++i, j += 4)
-        m[i] = (d[j] << 24) | (d[j+1] << 16) | (d[j+2] << 8) | (d[j+3]);
+        m[i] = ((uint32_t)d[j] << 24) | ((uint32_t)d[j+1] << 16)
+             | ((uint32_t)d[j+2] << 8) | (uint32_t)d[j+3];
     for (; i < 64; ++i)
         m[i] = (ROR(m[i-2],17)^ROR(m[i-2],19)^(m[i-2]>>10)) + m[i-7]
              + (ROR(m[i-15],7)^ROR(m[i-15],18)^(m[i-15]>>3)) + m[i-16];
@@ -179,6 +181,7 @@ static void sha256_transform(sha256_ctx *c, const unsigned char *d) {
         c->state[0]+=s0; c->state[1]+=s1; c->state[2]+=s2; c->state[3]+=s3;
         c->state[4]+=s4; c->state[5]+=s5; c->state[6]+=s6; c->state[7]+=s7;
     }
+    luaEnc_wipe(m, sizeof(m));
 }
 
 static void sha256_init(sha256_ctx *c) {
@@ -205,6 +208,44 @@ static void sha256_final(sha256_ctx *c, unsigned char *out) {
     for (i = 0; i < 4; ++i)
         for (int k = 0; k < 8; ++k)
             out[i + k*4] = (unsigned char)((c->state[k] >> (24 - i*8)) & 0xff);
+}
+
+/* 所有协议密钥均为 32 字节；分两段输入避免复制整份密文。 */
+static void hmac_sha256(const unsigned char key[32],
+                        const unsigned char *a, size_t an,
+                        const unsigned char *b, size_t bn,
+                        unsigned char out[32]) {
+    unsigned char pad[64], inner[32];
+    sha256_ctx c;
+    size_t i;
+    for (i = 0; i < sizeof(pad); ++i)
+        pad[i] = (unsigned char)((i < 32 ? key[i] : 0) ^ 0x36);
+    sha256_init(&c);
+    sha256_update(&c, pad, sizeof(pad));
+    sha256_update(&c, a, an);
+    sha256_update(&c, b, bn);
+    sha256_final(&c, inner);
+    for (i = 0; i < sizeof(pad); ++i) pad[i] ^= 0x36 ^ 0x5c;
+    sha256_init(&c);
+    sha256_update(&c, pad, sizeof(pad));
+    sha256_update(&c, inner, sizeof(inner));
+    sha256_final(&c, out);
+    luaEnc_wipe(pad, sizeof(pad));
+    luaEnc_wipe(inner, sizeof(inner));
+    luaEnc_wipe(&c, sizeof(c));
+}
+
+/* 比较完整认证值，不因首个不匹配字节的位置提前返回。 */
+static int tags_equal(const unsigned char *a, const unsigned char *b, size_t n) {
+    volatile unsigned char diff = 0;
+    size_t i;
+    for (i = 0; i < n; ++i) diff |= a[i] ^ b[i];
+    return diff == 0;
+}
+
+static void derive_key(const unsigned char master[32], const char *label,
+                       unsigned char out[32]) {
+    hmac_sha256(master, (const unsigned char *)label, strlen(label), NULL, 0, out);
 }
 
 /* ------------------------------- AES-256 ------------------------------- */
@@ -253,14 +294,14 @@ static void aes256_key_expansion(const unsigned char key[32], unsigned char rk[2
         rk[i]   = rk[i-32]   ^ t[0]; rk[i+1] = rk[i-31] ^ t[1];
         rk[i+2] = rk[i-30] ^ t[2]; rk[i+3] = rk[i-29] ^ t[3];
     }
+    luaEnc_wipe(t, sizeof(t));
 }
 
 /* 状态列主序：字节 (行 r, 列 c) = s[r + 4c] */
-static void aes256_encrypt_block(const unsigned char key[32],
+static void aes256_encrypt_block(const unsigned char rk[240],
                                  const unsigned char in[16], unsigned char out[16]) {
-    unsigned char rk[240], s[16], t;
+    unsigned char s[16], t;
     int round, k, c;
-    aes256_key_expansion(key, rk);
     memcpy(s, in, 16);
     for (k = 0; k < 16; ++k) s[k] ^= rk[k];
     for (round = 1; round <= 14; ++round) {
@@ -282,36 +323,56 @@ static void aes256_encrypt_block(const unsigned char key[32],
         for (k = 0; k < 16; ++k) s[k] ^= rk[16*round + k];
     }
     memcpy(out, s, 16);
+    luaEnc_wipe(s, sizeof(s));
+}
+
+/* 每个文件只展开一次 AES 密钥；v1 使用 64 位计数器，v2 使用 32 位。
+ * 调用方先限制 v2 长度，保证计数器不会溢出后重复密钥流。 */
+static void crypt_payload(const unsigned char key[32],
+                          const unsigned char *nonce, size_t nonce_len,
+                          const unsigned char *in, size_t n, unsigned char *out) {
+    unsigned char rk[240], ctr[16], ks[16];
+    size_t pos = 0;
+    uint64_t block = 0;
+    aes256_key_expansion(key, rk);
+    memcpy(ctr, nonce, nonce_len);
+    while (pos < n) {
+        size_t k, count = n - pos < 16 ? n - pos : 16;
+        for (k = nonce_len; k < 16; ++k)
+            ctr[k] = (unsigned char)(block >> ((15 - k) * 8));
+        aes256_encrypt_block(rk, ctr, ks);
+        for (k = 0; k < count; ++k) out[pos + k] = in[pos + k] ^ ks[k];
+        pos += count;
+        ++block;
+    }
     luaEnc_wipe(rk, sizeof(rk));
+    luaEnc_wipe(ctr, sizeof(ctr));
+    luaEnc_wipe(ks, sizeof(ks));
 }
 
-/* AES-256-CTR 密钥流块 j（16 字节）：AES_key( nonce(8) || u64_be(j) )。
- * 与 pack.py 的 cryptography AES-CTR(iv = nonce || 0^8) 逐块一致：CTR 把
- * 16 字节计数器当大端整数递增，低 8 字节从 0 起即 j，高 8 字节恒为 nonce。 */
-static void keystream_block(const unsigned char nonce[LUAENC_NONCE_LEN],
-                            uint64_t j, unsigned char out[16]) {
-    unsigned char key[32], ctr[16];
-    int k;
-    memcpy(ctr, nonce, LUAENC_NONCE_LEN);
-    for (k = 0; k < 8; ++k) ctr[8 + k] = (unsigned char)(j >> (56 - k * 8));
-    luaEnc_getKey(key);
-    aes256_encrypt_block(key, ctr, out);
-    luaEnc_wipe(key, sizeof(key));
+/* v2 最多使用 2^32 个分组，禁止 CTR 计数器回绕。 */
+static int valid_v2_length(size_t n) {
+    return (uint64_t)n <= (UINT64_C(1) << 36);
 }
 
-/* tag = SHA256(KEY || nonce) 前 8 字节 */
-static void compute_tag(const unsigned char nonce[LUAENC_NONCE_LEN],
-                        unsigned char out[LUAENC_TAG_LEN]) {
+/* 旧格式仅用于兼容读取；此 tag 没有认证密文。 */
+static void compute_legacy_tag(const unsigned char key[32],
+                               const unsigned char nonce[LUAENC_V1_NONCE_LEN],
+                               unsigned char out[LUAENC_V1_TAG_LEN]) {
     unsigned char full[32];
-    unsigned char key[32];
     sha256_ctx c;
-    luaEnc_getKey(key);
     sha256_init(&c);
-    sha256_update(&c, key, sizeof(key));
-    sha256_update(&c, nonce, LUAENC_NONCE_LEN);
+    sha256_update(&c, key, 32);
+    sha256_update(&c, nonce, LUAENC_V1_NONCE_LEN);
     sha256_final(&c, full);
-    memcpy(out, full, LUAENC_TAG_LEN);
-    luaEnc_wipe(key, sizeof(key));
+    memcpy(out, full, LUAENC_V1_TAG_LEN);
+    luaEnc_wipe(full, sizeof(full));
+    luaEnc_wipe(&c, sizeof(c));
+}
+
+/* 五字节前缀即可判为新协议候选；截断头和未知版本必须进入拒绝路径。 */
+static int has_v2_prefix(const unsigned char *p, size_t n) {
+    return p != NULL && n >= 5 && memcmp(p, LUAENC_MAGIC, 5) == 0;
 }
 
 /* ------------------------------- 对外接口 ------------------------------ */
@@ -341,28 +402,69 @@ const unsigned char *luaEnc_constMask(void) {
 }
 
 int luaEnc_isEncrypted(const unsigned char *p, size_t n) {
-    if (!p || n < LUAENC_HEADER_LEN) return 0;
-    unsigned char tag[LUAENC_TAG_LEN];
-    compute_tag(p, tag);                            /* p 前 8 字节即 nonce */
-    return memcmp(tag, p + LUAENC_NONCE_LEN, LUAENC_TAG_LEN) == 0;
+    unsigned char key[32], tag[LUAENC_V1_TAG_LEN];
+    int valid;
+    if (has_v2_prefix(p, n)) return 1;
+    if (!p || n < LUAENC_V1_HEADER_LEN) return 0;
+    luaEnc_getKey(key);
+    compute_legacy_tag(key, p, tag);
+    valid = tags_equal(tag, p + LUAENC_V1_NONCE_LEN, sizeof(tag));
+    luaEnc_wipe(key, sizeof(key));
+    luaEnc_wipe(tag, sizeof(tag));
+    return valid;
 }
 
 unsigned char *luaEnc_decrypt(const unsigned char *in, size_t n, size_t *outn) {
+    unsigned char key[32], enc_key[32], mac_key[32], tag[32];
+    const unsigned char *nonce, *ct;
+    size_t ctlen, nonce_len;
+    unsigned char *out = NULL;
+    int version2;
+    if (outn) *outn = 0;
     if (entry_hooked()) return NULL;  /* 入口被 inline hook：拒绝解密 */
-    if (!luaEnc_isEncrypted(in, n)) return NULL;
-    const unsigned char *nonce = in;                /* nonce(8) | tag(8) | ct */
-    const unsigned char *ct = in + LUAENC_HEADER_LEN;
-    size_t ctlen = n - LUAENC_HEADER_LEN;
-
-    unsigned char *out = (unsigned char *)malloc(ctlen ? ctlen : 1);
-    if (!out) return NULL;
-
-    unsigned char ks[16];
-    for (size_t i = 0; i < ctlen; ++i) {
-        if ((i & 15) == 0) keystream_block(nonce, (uint64_t)(i >> 4), ks);
-        out[i] = ct[i] ^ ks[i & 15];
+    if (!in) return NULL;
+    version2 = has_v2_prefix(in, n);
+    if (version2) {
+        if (n < LUAENC_HEADER_LEN || memcmp(in, LUAENC_MAGIC, LUAENC_MAGIC_LEN) != 0)
+            return NULL;
+        ctlen = n - LUAENC_HEADER_LEN;
+        if (!valid_v2_length(ctlen)) return NULL;
+        nonce_len = LUAENC_NONCE_LEN;
+        nonce = in + LUAENC_MAGIC_LEN;
+        ct = in + LUAENC_HEADER_LEN;
     }
+    else {
+        if (n < LUAENC_V1_HEADER_LEN) return NULL;
+        ctlen = n - LUAENC_V1_HEADER_LEN;
+        nonce_len = LUAENC_V1_NONCE_LEN;
+        nonce = in;
+        ct = in + LUAENC_V1_HEADER_LEN;
+    }
+    luaEnc_getKey(key);
+    if (version2) {
+        derive_key(key, "LUAENC2-MAC", mac_key);
+        hmac_sha256(mac_key, in, LUAENC_MAGIC_LEN + LUAENC_NONCE_LEN,
+                    ct, ctlen, tag);
+        if (!tags_equal(tag, in + LUAENC_MAGIC_LEN + LUAENC_NONCE_LEN,
+                        LUAENC_TAG_LEN)) goto cleanup;
+        derive_key(key, "LUAENC2-ENC", enc_key);
+    }
+    else {
+        compute_legacy_tag(key, nonce, tag);
+        if (!tags_equal(tag, in + LUAENC_V1_NONCE_LEN, LUAENC_V1_TAG_LEN))
+            goto cleanup;
+        memcpy(enc_key, key, sizeof(enc_key));
+    }
+    /* 认证成功之后才分配并生成明文。空脚本仍返回可释放的有效指针。 */
+    out = (unsigned char *)malloc(ctlen ? ctlen : 1);
+    if (!out) goto cleanup;
+    crypt_payload(enc_key, nonce, nonce_len, ct, ctlen, out);
     if (outn) *outn = ctlen;
+cleanup:
+    luaEnc_wipe(key, sizeof(key));
+    luaEnc_wipe(enc_key, sizeof(enc_key));
+    luaEnc_wipe(mac_key, sizeof(mac_key));
+    luaEnc_wipe(tag, sizeof(tag));
     return out;
 }
 
@@ -372,35 +474,58 @@ unsigned char *luaEnc_decrypt(const unsigned char *in, size_t n, size_t *outn) {
 
 static unsigned char *enc(const unsigned char *pt, size_t n,
                           const unsigned char nonce[LUAENC_NONCE_LEN], size_t *outn) {
-    size_t total = LUAENC_HEADER_LEN + n;
-    unsigned char *out = (unsigned char *)malloc(total ? total : 1);
-    memcpy(out, nonce, LUAENC_NONCE_LEN);
-    compute_tag(nonce, out + LUAENC_NONCE_LEN);
-    unsigned char ks[16];
-    for (size_t i = 0; i < n; ++i) {
-        if ((i & 15) == 0) keystream_block(nonce, (uint64_t)(i >> 4), ks);
-        out[LUAENC_HEADER_LEN + i] = pt[i] ^ ks[i & 15];
-    }
+    unsigned char key[32], enc_key[32], mac_key[32];
+    unsigned char *out;
+    size_t total;
+    if (!valid_v2_length(n) || n > SIZE_MAX - LUAENC_HEADER_LEN) return NULL;
+    total = LUAENC_HEADER_LEN + n;
+    out = (unsigned char *)malloc(total);
+    if (!out) return NULL;
+    luaEnc_getKey(key);
+    derive_key(key, "LUAENC2-ENC", enc_key);
+    derive_key(key, "LUAENC2-MAC", mac_key);
+    memcpy(out, LUAENC_MAGIC, LUAENC_MAGIC_LEN);
+    memcpy(out + LUAENC_MAGIC_LEN, nonce, LUAENC_NONCE_LEN);
+    crypt_payload(enc_key, nonce, LUAENC_NONCE_LEN, pt, n, out + LUAENC_HEADER_LEN);
+    hmac_sha256(mac_key, out, LUAENC_MAGIC_LEN + LUAENC_NONCE_LEN,
+                out + LUAENC_HEADER_LEN, n, out + LUAENC_MAGIC_LEN + LUAENC_NONCE_LEN);
+    luaEnc_wipe(key, sizeof(key));
+    luaEnc_wipe(enc_key, sizeof(enc_key));
+    luaEnc_wipe(mac_key, sizeof(mac_key));
     *outn = total;
     return out;
 }
 
 int main(int argc, char **argv) {
-    /* 用法: luaenc_test enc|dec  < in > out   （enc 用固定 nonce 便于比对） */
-    unsigned char *buf = NULL; size_t cap = 0, n = 0; int ch;
+    /* 用法: luaenc_test enc|dec < in > out；enc 固定 nonce 便于跨语言比对。 */
+    unsigned char *buf = NULL, *out;
+    size_t cap = 0, n = 0, outn = 0;
+    int ch, status = 1;
     while ((ch = getchar()) != EOF) {
-        if (n == cap) { cap = cap ? cap*2 : 4096; buf = realloc(buf, cap); }
+        if (n == cap) {
+            size_t next = cap ? cap * 2 : 4096;
+            unsigned char *grown;
+            if (next < cap) goto done;
+            grown = (unsigned char *)realloc(buf, next);
+            if (!grown) goto done;
+            buf = grown;
+            cap = next;
+        }
         buf[n++] = (unsigned char)ch;
     }
-    size_t outn = 0; unsigned char *out;
+    if (ferror(stdin)) goto done;
     if (argc > 1 && strcmp(argv[1], "enc") == 0) {
-        unsigned char nonce[8] = {1,2,3,4,5,6,7,8};
+        unsigned char nonce[LUAENC_NONCE_LEN] = {1,2,3,4,5,6,7,8,9,10,11,12};
         out = enc(buf, n, nonce, &outn);
-    } else {
-        out = luaEnc_decrypt(buf, n, &outn);
-        if (!out) { fprintf(stderr, "decrypt failed\n"); return 1; }
     }
-    fwrite(out, 1, outn, stdout);
-    return 0;
+    else out = luaEnc_decrypt(buf, n, &outn);
+    if (!out) { fprintf(stderr, "encrypt/decrypt failed\n"); goto done; }
+    status = fwrite(out, 1, outn, stdout) != outn || fflush(stdout) != 0;
+    luaEnc_wipe(out, outn);
+    free(out);
+done:
+    luaEnc_wipe(buf, n);
+    free(buf);
+    return status;
 }
 #endif

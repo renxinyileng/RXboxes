@@ -828,46 +828,84 @@ LUALIB_API int luaL_loadfilex (lua_State *L, const char *filename,
   else {
     lua_pushfstring(L, "@%s", filename);
     errno = 0;
-    lf.f = fopen(filename, "r");
+    lf.f = fopen(filename, "rb");
     if (lf.f == NULL) return errfile(L, "open", fnameindex);
   }
-  /* 加密脚本走这里透明解密。所有落盘脚本（doFile 的 LloadFile、require 走
-   * package.path、dofile/loadfile）最终都过 luaL_loadfilex，所以这一个点就
-   * 兜住了文件加载路径。只在带魔数时改道，普通/字节码文件走下面原逻辑不变。 */
+  /* 文件路径识别 v2 前缀或兼容旧 tag；截断头/未知版本也进入解密失败分支，
+   * 防止损坏密文回退成源码。先以二进制模式探测，避免 Windows 文本转换。 */
   if (filename != NULL) {
     unsigned char hdr[16];
     size_t got = fread(hdr, 1, sizeof(hdr), lf.f);
+    if (ferror(lf.f)) {
+      int saved_errno = errno;
+      fclose(lf.f);
+      errno = saved_errno;
+      return errfile(L, "read", fnameindex);
+    }
     if (luaEnc_isEncrypted(hdr, got)) {
+      unsigned char *raw, *plain;
+      size_t rn, plen = 0, offset = 0;
+      long fsz;
+      int ferr, saved_errno;
+      LoadS ls;
       /* 反 Frida/反调试：检测到注入则延迟自毁 */
       if (luaAnti_check()) luaAnti_destruct();
-      /* 读整包 -> 解密 -> 从内存解析 */
-      long fsz;
-      if (fseek(lf.f, 0, SEEK_END) != 0 || (fsz = ftell(lf.f)) < 0) {
-        fclose(lf.f); return errfile(L, "read", fnameindex);
+      /* 读取完整密文并检查实际长度，不能把短读当成有效脚本。 */
+      errno = 0;
+      if (fseek(lf.f, 0, SEEK_END) != 0 || (fsz = ftell(lf.f)) < 0 ||
+          (unsigned long)fsz > MAX_SIZET || fseek(lf.f, 0, SEEK_SET) != 0) {
+        saved_errno = errno;
+        fclose(lf.f);
+        errno = saved_errno;
+        return errfile(L, "read", fnameindex);
       }
-      rewind(lf.f);
-      unsigned char *raw = (unsigned char *)malloc((size_t)fsz ? (size_t)fsz : 1);
-      if (raw == NULL) { fclose(lf.f); return errfile(L, "read", fnameindex); }
-      size_t rn = fread(raw, 1, (size_t)fsz, lf.f);
-      int ferr = ferror(lf.f);
+      raw = (unsigned char *)malloc((size_t)fsz ? (size_t)fsz : 1);
+      if (raw == NULL) {
+        fclose(lf.f);
+        errno = ENOMEM;
+        return errfile(L, "read", fnameindex);
+      }
+      errno = 0;
+      rn = fread(raw, 1, (size_t)fsz, lf.f);
+      ferr = rn != (size_t)fsz || ferror(lf.f);
+      if (!ferr && getc(lf.f) != EOF) ferr = 1;  /* 文件读取中增长也必须拒绝 */
+      ferr = ferr || ferror(lf.f);
+      saved_errno = errno;
       fclose(lf.f);
-      if (ferr) { free(raw); return errfile(L, "read", fnameindex); }
-      size_t plen = 0;
-      unsigned char *plain = luaEnc_decrypt(raw, rn, &plen);
+      if (ferr) {
+        free(raw);
+        errno = saved_errno;
+        return errfile(L, "read", fnameindex);
+      }
+      plain = luaEnc_decrypt(raw, rn, &plen);
       free(raw);
       if (plain == NULL) {
-        lua_settop(L, fnameindex);
         lua_pushfstring(L, "cannot decrypt %s", filename);
+        lua_remove(L, fnameindex);
         return LUA_ERRSYNTAX;
       }
-      LoadS ls; ls.s = (const char *)plain; ls.size = plen;
-      status = lua_load(L, getS, &ls, lua_tostring(L, -1), mode);
+      /* 与普通 loadfile 一致：跳过 UTF-8 BOM 和首行 #，源码保留换行以维持
+       * 报错行号；若后面是字节码则跳过换行。buffer/load 不做这项文件处理。 */
+      if (plen >= 3 && memcmp(plain, "\xef\xbb\xbf", 3) == 0) offset = 3;
+      if (offset < plen && plain[offset] == '#') {
+        while (offset < plen && plain[offset] != '\n') ++offset;
+        if (offset + 1 < plen && plain[offset + 1] == LUA_SIGNATURE[0]) ++offset;
+      }
+      ls.s = (const char *)plain + offset;
+      ls.size = plen - offset;
+      status = lua_load(L, getS, &ls, lua_tostring(L, fnameindex), mode);
       luaEnc_wipe(plain, plen);  /* 明文用完即擦，缩短内存驻留 */
       free(plain);
       lua_remove(L, fnameindex);
       return status;
     }
-    rewind(lf.f);  /* 非加密：回到文件头，交给下面的原逻辑 */
+    errno = 0;
+    if (fseek(lf.f, 0, SEEK_SET) != 0) {
+      int saved_errno = errno;
+      fclose(lf.f);
+      errno = saved_errno;
+      return errfile(L, "read", fnameindex);
+    }
   }
   lf.n = 0;
   if (skipcomment(lf.f, &c))  /* read initial portion */
@@ -901,7 +939,7 @@ LUALIB_API int luaL_loadbufferx (lua_State *L, const char *buff, size_t size,
   LoadS ls;
   /* 加密内容（带 LENC 魔数头）在这里透明解密后再解析，明文只在内存里存在。
    * 覆盖 LloadBuffer 路径 —— 比如 Welcome 用 readAsset+LloadBuffer 加载
-   * update.lua。解出来的明文不带魔数，递归回来不会再次进入本分支。 */
+   * update.lua。解密结果只解析一次，嵌套密文不能递归解密并执行。 */
   if (luaEnc_isEncrypted((const unsigned char *)buff, size)) {
     /* 反 Frida/反调试：检测到注入则延迟自毁 */
     if (luaAnti_check()) luaAnti_destruct();
@@ -911,7 +949,10 @@ LUALIB_API int luaL_loadbufferx (lua_State *L, const char *buff, size_t size,
       lua_pushfstring(L, "cannot decrypt %s", name ? name : "?");
       return LUA_ERRSYNTAX;
     }
-    int st = luaL_loadbufferx(L, (const char *)plain, plen, name, mode);
+    int st;
+    ls.s = (const char *)plain;
+    ls.size = plen;
+    st = lua_load(L, getS, &ls, name, mode);
     luaEnc_wipe(plain, plen);  /* 明文用完即擦，缩短内存驻留 */
     free(plain);
     return st;

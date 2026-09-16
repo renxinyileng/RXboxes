@@ -103,23 +103,37 @@ jobs:
       # 的字节码再加密 —— unluac 依赖调试信息，strip 后直接失效。
       - name: 构建 host lua（用于 strip 编译）
         run: |
+          set -euo pipefail
+          # 清理旧对象，确保测试和打包使用本次源码及编译选项。
+          make -C androlua/src/main/jni/lua clean
           make -C androlua/src/main/jni/lua all \
             MYCFLAGS="-std=c99 -D_GNU_SOURCE -DLUA_USE_LINUX" MYLIBS="-ldl" \
             -j"$(nproc)"
           test -x androlua/src/main/jni/lua/lua
 
+      - name: 校验 Lua 加密与加载兼容性
+        run: |
+          set -euo pipefail
+          cc -std=c99 -D_GNU_SOURCE -DLUAENC_TEST_MAIN \
+            androlua/src/main/jni/lua/luaenc.c -o "$RUNNER_TEMP/luaenc-test"
+          python3 native/luaenc/pack.py selftest
+          python3 native/luaenc/test_pack.py \
+            --lua androlua/src/main/jni/lua/lua --codec "$RUNNER_TEMP/luaenc-test"
+
       - name: 加密 Lua 脚本
         run: |
           set -euo pipefail
-          # 先自测，密钥/算法一旦对不上立刻红，不要等装到机器上才发现
-          python3 native/luaenc/pack.py selftest
           APK="$(ls app/build/outputs/apk/release/*.apk | head -1)"
           echo "加密 $APK 内的 .lua（strip 编译 + 加密）"
-          python3 native/luaenc/pack.py enc-apk "$APK" "$RUNNER_TEMP/enc.apk" \
+          # 临时文件与原 APK 同目录，通过校验后才替换，失败时保留原包。
+          ENCRYPTED="$(mktemp "${APK}.enc.XXXXXX")"
+          trap 'rm -f "$ENCRYPTED"' EXIT
+          python3 native/luaenc/pack.py enc-apk "$APK" "$ENCRYPTED" \
             --lua androlua/src/main/jni/lua/lua
-          mv "$RUNNER_TEMP/enc.apk" "$APK"
-          # 断言：APK 内每个 .lua 都已是密文、且能解回
-          python3 native/luaenc/pack.py verify-apk "$APK"
+          # 每个 .lua 都必须能认证解密，并被本仓库定制 VM 实际加载。
+          python3 native/luaenc/pack.py verify-apk "$ENCRYPTED" \
+            --lua androlua/src/main/jni/lua/lua
+          mv -f "$ENCRYPTED" "$APK"
 
       # 不再依赖已停更的第三方签名 Action
       - name: 签名APK文件
