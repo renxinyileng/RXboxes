@@ -1,215 +1,133 @@
 # Lua 脚本加密
 
-打包时把 `.lua` 换成密文，运行时在内存里透明解密，磁盘/APK 里不出现明文源码。
+源码在仓库中保持明文；发布时把 APK 内所有 `.lua` 条目改为密文，运行时由
+`luaL_loadfilex` / `luaL_loadbufferx` 在内存中认证、解密并加载。
+Debug 包保留明文，Release 包加密失败会使构建失败。
 
-## 威胁模型（先说清楚能做到什么）
+## v2 认证加密格式
 
-这是**混淆级**防护，不是数学级保密。解密密钥随 `.so` 出厂，有决心的逆向者
-反汇编 `libluajava.so` 仍能取到密钥、进而解出全部脚本；即便不取密钥，也能
-hook `luaL_loadbufferx` 在解密后的那一刻 dump 内存明文。
+```
+magic[8] = 1b 4c 45 4e 43 02 0d 0a
+nonce[12] = 每个文件独立的安全随机数
+ tag[32] = HMAC-SHA256(mac_key, magic || nonce || ciphertext)
+ciphertext[...] = AES-256-CTR(enc_key, nonce || u32_be(counter), payload)
+```
 
-目标是把门槛从**「`unzip` 就能读源码」**抬到**「要会脱壳 + 逆向 native +
-对抗反注入检测」**，挡住绝大多数人。想要更强只能靠服务端下发 + 远程鉴权，
-那是另一套工程。
+计数器从 0 开始，每块 16 字节，最多 `2^32` 块。主密钥仍从 `luaenc.c` 的
+六张混淆表重组，Python 打包器直接读取同一份表。两类子密钥独立派生：
 
-## 组成
+```
+enc_key = HMAC-SHA256(master_key, "LUAENC2-ENC")
+mac_key = HMAC-SHA256(master_key, "LUAENC2-MAC")
+```
+
+运行时先以固定长度比较验证完整 HMAC，成功后才分配并生成明文。
+修改版本、nonce、认证值、密文，或截断、追加内容，都会导致加载失败。
+带新协议前缀但头不完整、版本未知的文件也会被拒绝。明文缓冲、子密钥、
+AES 轮密钥用完擦除；每个文件只展开一次 AES 轮密钥。
+
+算法均由项目内实现；Python 只使用标准库，不依赖 `cryptography`。
+新格式保留明确版本标识，方便可靠地区分协议和处理损坏文件。
+
+### 兼容与迁移
+
+旧格式为 `nonce[8] + SHA256(master_key || nonce)[:8] + ciphertext`，
+其 tag 只校验 nonce，**不能检测载荷篡改**。新运行时保留旧格式读取能力，
+`enc-file` / `enc-apk` 遇到旧密文会解密后升级为 v2；有效 v2 内容重复打包保持不变。
+`verify-apk` 要求全部 `.lua` 都是认证有效的 v2 密文，旧包须先重新加密。
+
+新密文需要同时发布本次编译的 `libluajava.so`，旧运行时不支持 v2。
+旧格式的历史载荷无法补做可信认证；迁移应优先使用仓库内可信源码重新构建。
+保留旧格式兼容意味着旧输入仍没有认证保护；v2 认证不会改变这个边界。
+
+## 保护边界
+
+这套方案保护 APK 内脚本，防止直接解包阅读，并检测未持有密钥时对 v2 文件的
+修改。密钥随客户端分发，能提取密钥或读取运行时内存的人仍可能恢复脚本或
+伪造认证值。它不提供来源签名、防回滚或动态内存绝对保密。
+
+现有定制 VM、常量池混淆和反调试机制继续使用，本次没有更换主密钥、VM
+映射或加强反调试。它们是提高分析成本的措施，不能保证反编译工具永远失效。
+
+## 文件与加载入口
 
 | 文件 | 作用 |
 |---|---|
-| `androlua/src/main/jni/lua/luaenc.c` / `.h` | 设备端解密。含内置 SHA-256、AES-256、**唯一真源的密钥（六表多级拆分）**、CTR-XOR 解密、常量池载荷盐、解密入口自校验 |
-| `androlua/src/main/jni/lua/luaanti.c` / `.h` | 反 Frida / 反调试：maps 扫描、线程名、27042 D-Bus 握手、TracerPid（全 syscall 直读），命中即延迟自毁；特征串按 XOR 盐加密存放（防 `strings` 抖出方案） |
-| `androlua/src/main/jni/lua/ldump.c` / `lundump.c`（改动） | 字节码常量池载荷加密（字符串/数值 XOR 盐），两端对称 |
-| `androlua/src/main/jni/lua/lauxlib.c`（改动） | 在 `luaL_loadfilex` / `luaL_loadbufferx` 里挂解密钩子 + 反注入检测 + 明文用完即擦 |
-| `androlua/src/main/jni/lua/lopcodes.h` 等 4 文件（改动） | **定制 VM**：83 个 opcode 重排 + iABC 的 B/C 位域交换（见下） |
-| `native/luaenc/gen_opcodes.py` | 定制 VM opcode 表生成器（固定种子可复现，换种子 = 换一套映射） |
-| `native/luaenc/gen_key.py` | 密钥六表混淆拆分生成器（据目标密钥反解，绝不打印明文；`--seed` 可复现，`--check` 只校验） |
-| `native/luaenc/pack.py` | 打包端加密器，密钥直接从 `luaenc.c` 六表解析并按同款多级逻辑重组，两端不漂移；支持 `--lua` strip 编译 |
-| `.github/workflows/android.yml`（改动） | 构建 host lua → strip 编译 → 签名前把 APK 内 `.lua` 全部改写成密文并校验 |
+| `androlua/src/main/jni/lua/luaenc.c` / `.h` | AES、SHA-256、HMAC、密钥重组、v1/v2 读取与擦除 |
+| `androlua/src/main/jni/lua/lauxlib.c` | 文件及内存加载前的认证解密 |
+| `native/luaenc/pack.py` | 加密、旧格式迁移、无调试信息字节码编译、APK 校验 |
+| `native/luaenc/test_pack.py` | Python/C 一致性、篡改拒绝、实际 Lua 加载与打包回归 |
+| `app/build.gradle` | 本地 Release 加密任务 |
+| `.github/workflows/android.yml` | 同源 host Lua 构建、集成测试、签名前加密与校验 |
 
-## 定制 VM（opcode 重排 + 位域盐）
+`doFile`、`require`、`dofile`、`loadfile` 最终经过文件加载钩子；
+`LloadBuffer` 与 Lua 的 `load(string)` 经过内存加载钩子。
+`load(reader_function)` 仍遵循 Lua 原始 reader 协议，不自动解密分段密文。
+普通源码和定制 VM 字节码继续可读，加载模式 `t` / `b` 约束解密后的内容。
+文件加载保留 BOM、首行 shebang 与行号语义，缓冲加载保留 Lua 的原始语义。
 
-- 83 个 opcode 按固定种子（`20260805`）重排，`OP_EXTRAARG` 保持末位；
-  `lopcodes.h`/`ljumptab.h`/`lopnames.h`/`lopcodes.c` 由
-  `python3 native/luaenc/gen_opcodes.py [--seed N]` 一次性同步生成
-  （内含一致性断言，改种子 = 换一套映射，与旧字节码不兼容）。
-- **重排约束**：`lcode.c` 的 `binopr2op`/`unopr2op` 用「枚举差值」推导
-  opcode（`opr - baser + base`），以下原子组必须保持官方相对顺序连续，
-  生成器按「组间洗牌、组内不动」处理（勿手工打散）：
-  `ADD..SHR`、`ADDK..BXORK`、`UNM..LEN`、`LT/LE`、`LTI/LEI`、`GTI/GEI`。
-- iABC 的 B/C 字段位置交换（`lopcodes.h` 的 `POS_B`/`POS_C` 宏）作位域盐，
-  所有 `GETARG_*`/`SETARG_*`/`CREATE_*` 宏跟随，编译期自动一致、运行期零开销。
-- 效果：`unluac`/`luadec` 按标准格式硬解码全部错位；配合阶段 A 的 strip，
-  反编译回到"行为分析"级别。注意纯重排可被对照/统计方法恢复（见
-  `ulua` 等工具），这是拖延层不是防线。
+解密后直接交给解析器，禁止递归拆开多层密文。`.lua` 后缀保持不变，
+以兼容 AndroLua 的文件名解析和入口约定。
 
-## 密文格式（无明文魔数）
+## 定制 VM 与密钥维护
 
-```
-nonce[8] = 每个文件随机（明文存放，让各文件密钥流互相独立）
-tag[8]   = SHA256(KEY || nonce) 前 8 字节
-ct[...]  = 明文 XOR AES-256-CTR 密钥流
-```
+- 83 个 opcode 重排与 iABC 的 B/C 位域交换由 `gen_opcodes.py` 同步生成。
+  `OP_EXTRAARG` 保持末位；算术、比较等依赖枚举差值的组保留组内连续顺序。
+- `ldump.c` / `lundump.c` 对称处理字符串、数值常量载荷盐。
+  编译字节码必须使用本仓库同源码构建的 host Lua，不能用系统标准 Lua 替代。
+- 主密钥六表 A/B/C/R/P/W 通过置换、掩码、旋转与链式白化重组。
+  `gen_key.py` 不带参数仅重新拆分现有密钥；`--seed` 可复现，`--check` 只校验。
+  **只换拆分且主密钥相同不影响旧密文；换主密钥才影响密文兼容性。**
+- 改 VM 映射或常量盐后应重编运行时并重新编译所有字节码。
 
-**没有固定魔数**：整个头就是 nonce + tag，对没有 KEY 的人来说与随机字节
-不可区分——grep 不到签名，打开文件也看不出用了什么方案。tag 同时充当
-「是不是本方案加密的」判据和密钥/完整性校验：读头 16 字节，用 nonce 重算
-SHA256(KEY||nonce)[:8] 与 tag 比对，命中才解密。
+## 打包与校验
 
-密码算法 **AES-256-CTR**：`key` = 拆分方案（SEGS/MASK/MAP）重组出的 32 字节；
-`block_j(16B) = AES256(key, nonce(8) || u64_be(j))`，`j = 0,1,2,…`，明文逐 16
-字节与密钥流异或。设备端 `luaenc.c` 自带一份 AES-256（该 so 没链 OpenSSL），
-打包端 `pack.py` 用等价的纯 Python AES-256（不依赖 cryptography，避免其
-`_cffi_backend` 在部分环境缺失），两端过 FIPS-197 已知答案向量对齐、并有
-C↔Python round-trip 兜底。
-
-tag 仍用 SHA-256(KEY||nonce)[:8]，只作检测/校验，与密码算法无关。明文脚本
-首 16 字节恰好通过 tag 校验的概率约 2^-64，可忽略，不会把明文误判成密文。
-
-> 注：`.lua` 后缀仍保留在 APK 内。改后缀会牵动 AndroLua 的 require/doFile/
-> newActivity 名称解析（硬编码 `.lua`）以及 Welcome 对 main.lua/init.lua 的
-> 特判，回归面大而收益低（本就是明显的 AndroLua 应用），故未动。
-
-## 密钥（六表多级拆分，防静态提取）
-
-32 字节密钥不以完整形态、也不以「两表异或即得」的形式出现在 `.so` 里，
-而是拆成 **6 张表**（`luaenc.c` 的 `LUAENC_KEY_BEGIN`/`END` 之间，唯一真源），
-运行时用「置换 + 异或掩码 + 加法掩码 + 逐字节位旋转 + CBC 式链式白化」重组：
-
-```
-表：A[32] 段字节 · B[32] 异或掩码 · C[32] 加法掩码 · R[32] 旋转量(0..7)
-    · P[32] 置换 · W[32] 白化掩码
-阶段一（按置换收集，每字节混入 3 种运算）：
-    j = P[i]; s[i] = rotl8( ((A[j] ^ B[j]) + C[j]) & 0xff , R[j] & 7 )
-阶段二（链式白化，令每个输出字节耦合前一个）：
-    prev = 0xA5; key[i] = s[i] ^ W[i] ^ prev; prev = key[i]
-```
-
-阶段二的链式白化是关键：每个输出字节都依赖前一个输出，单看任意几张表都
-无法还原，破坏了旧方案「dump 两张数组一次异或就出密钥」的可分析性。
-
-三处逻辑互为镜像、永不漂移：设备端 `luaEnc_getKey`（C 正向）、打包端
-`pack.py` 的 `load_key`（Python 正向）、生成器 `gen_key.py` 的 `reconstruct`
-（正向）+ 逆运算（据密钥反解 6 表）。改动任一处，`selftest` 与
-C↔Python round-trip 都会立刻抓出不一致。
-
-**换拆分 / 换密钥**：跑 `python3 native/luaenc/gen_key.py`（`--seed N` 可复现）。
-不带参数时保持现有密钥值不变、只换一套混淆拆分；该脚本据目标密钥反解 6 表，
-**绝不打印密钥明文**。改后必须重编 `libluajava.so` 并重新出包，旧包不兼容。
-
-### 设备端重组的额外混淆（仅 C 侧，不改结果）
-
-`luaEnc_getKey` 在六表重组之上再叠三层，只让设备侧难读，`pack.py`/`gen_key.py`
-仍是干净镜像：
-
-- **防常量折叠**：本文件在 ndk 侧以 `-O3 -flto` 编译、六表又全 `const`，编译器
-  能把「const 表 → 成品密钥」整体折叠进 `.rodata`（拆表白拆）。挂一个 volatile
-  锚点（运行期恒 `0xA5`、编译期不可知）参与重组，强制每次真跑一遍——实测 `-O3`
-  产物里搜不到成品密钥的连续 32 字节。
-- **碎片化**：阶段一单字节重组拆成 `__noinline__` 的 `luaEnc_stage1`。
-- **MBA 恒等式**：`+`/`^` 改写成 `(a|b)-(a&b)` / `(a^b)+2*(a&b)`，抹掉「查表异或」
-  的可辨模式；中间数组按步长 7 乱序填充，避开顺序循环。
-
-成品密钥用完即擦（中间态与调用方 `keystream_block`/`compute_tag` 均 wipe）。
-
-## 常量池载荷盐
-
-`string.dump`/`luac -s` 产出的字节码里，字符串与数值常量载荷在
-`ldump.c` 写入时被 8 字节循环掩码异或（`luaEnc_constMask()`，唯一真源），
-`lundump.c` 读取时对称还原。配合定制 VM，静态阅读/工具化反编译进一步受阻。
-仅防直接阅读，非密码学。
-
-## 反注入 / 反调试（luaanti.c）
-
-解密钩子在命中密文时调用 `luaAnti_check()`，四路检测（全 syscall 直读，
-绕过 libc hook）：
-
-- `/proc/self/maps` 找 `frida` 特征（frida-agent/gadget）
-- `/proc/self/task/*/comm` 找 `gum-js`/`pool-frida` 线程名
-- `127.0.0.1:27042` connect + D-Bus AUTH 握手（REJECTED/OK/DATA/ERROR）
-- `/proc/self/status` 的 `TracerPid` 非 0
-
-命中即**延迟自毁**（随机 1-5 秒后 abort，增加检测点被定位难度）；检测结果
-3 秒节流缓存。此外 `luaEnc_decrypt` 入口自校验（首调快照 + 每次比对），
-入口被 inline hook 改写即拒绝解密。均为拖延层：Frida 改名/换端口/重编译
-可绕过，2025 年起 KPM（内核级）可屏蔽 TracerPid 读取。
-
-**特征串加密存放**：上述特征词（`frida`/`gum-js`/`pool-frida`/`TracerPid:`/
-`REJECTED` 等、以及 `/proc` 路径与 AUTH 握手字节）不以明文入 `.so`，而是按
-固定 XOR 盐存放、用时解到栈缓冲、用完即弃，避免 `strings | grep frida` 一下
-就把检测方案抖搂干净。盐取自 volatile（否则 `-O3` 会在编译期把明文折叠回
-`.rodata`）；`LUAANTI_TEST_MAIN` 自测逐条校验解出的明文，编码手误编译期即失败，
-不会静默让某路检测失效。仅抬高静态阅读门槛，非密码学。
-
-## 为什么钩这两个函数就够
-
-所有落盘脚本的加载最终都经过 Lua 核心这两个函数，一处兜住全部：
-
-- `doFile` → `LloadFile` → `luaL_loadfile` → **`luaL_loadfilex`**
-- `require`（Lua 搜索器）、`dofile`、`loadfile` → **`luaL_loadfilex`**
-- `LloadBuffer`（如 Welcome 加载 `update.lua`）→ `luaL_loadbuffer` → **`luaL_loadbufferx`**
-
-只在检测到魔数头时改道解密；普通脚本、字节码文件走原逻辑不变（向后兼容，
-未加密的包也能跑）。解出来的明文不带魔数，递归回来不会二次解密。
-
-## 在哪一步加密
-
-`.lua` 源码始终以**明文**留在仓库(可读、可改、可 diff)；加密只发生在打包时，
-对最终 APK 的 zip 条目改写——**与 AGP 版本无关**、只动 `.lua` 条目、
-`.so`/manifest/resources 逐字节原样。选 APK 层而非 sourceSet 层，是因为构建
-app 时 AGP 会把 androlua 模块的 `resources/lua` 也并进 APK，只有在 APK 层
-改写才能把各模块的 `.lua` 一网打尽。
-
-两处都会加密，互为双保险（`pack.py` 幂等，先跑到的那次生效，另一次空操作）：
-
-1. **本地 `./gradlew assembleRelease`** —— `app/build.gradle` 注册的
-   `encryptReleaseLua` 作为 `assembleRelease` 的 finalizer，对产出的**未签名**
-   release APK 跑 `pack.py enc-apk`。缺 python3 只告警不失败；APK 若已签名则
-   跳过（改写会破坏签名，`pack.py` 直接拒绝）。正常本地流程：出未签名包→
-   自动加密→再签名。debug 包不加密（保留可调试）。
-2. **CI** —— 在签名前额外跑一遍 `enc-apk` + `verify-apk`。因为 gradle 那步
-   已经加密，这里通常是空操作，但 `verify-apk` 会硬断言 APK 内每个 `.lua`
-   都是密文，是最终防线。
-
-## 阶段 A：strip 编译（unluac 失效）
-
-CI 在加密前先用**与设备同一份源码**（含定制 VM 重排与常量盐）编译 host
-lua，再对每个 `.lua` 执行 `string.dump(f, true)`（等价 `luac -s`）生成
-**剥离调试信息**的字节码，之后才加密。`unluac` 依赖调试信息，strip 后直接
-失效；`luadec` 不支持 5.4。host lua 构建：
+构建同源 host Lua（Linux）：
 
 ```bash
-make -C androlua/src/main/jni/lua all MYCFLAGS="-std=c99 -D_GNU_SOURCE -DLUA_USE_LINUX" MYLIBS="-ldl"
+make -C androlua/src/main/jni/lua clean
+make -C androlua/src/main/jni/lua all \
+  MYCFLAGS="-std=c99 -D_GNU_SOURCE -DLUA_USE_LINUX" MYLIBS="-ldl"
 ```
 
-本地复现：`python3 native/luaenc/pack.py enc-apk in.apk out.apk --lua androlua/src/main/jni/lua/lua`
-
-## 自测
+`-D_GNU_SOURCE` 暴露 host 端需要的 POSIX 声明；`lbitlib.o` 必须保留在库中。
+编译辅助脚本通过 `lua -E -` 从 stdin 执行，输入脚本仅加载、编译，绝不执行业务
+代码；`-E` 忽略宿主机 `LUA_INIT` 等环境变量。
 
 ```bash
-python3 native/luaenc/pack.py selftest            # 加解密 round-trip
-python3 native/luaenc/gen_key.py --check          # 校验 luaenc.c 六表能重组出密钥
-python3 native/luaenc/gen_opcodes.py              # 定制 VM 表重排（幂等，可复现）
-# 交叉验证 python 加密 ↔ C 解密（同时验证 C 的 luaEnc_getKey 与 pack.py 密钥一致）：
-gcc -DLUAENC_TEST_MAIN -std=c99 -D_GNU_SOURCE -O2 -o /tmp/luaenc androlua/src/main/jni/lua/luaenc.c
-/tmp/luaenc enc <X.lua >/tmp/e.bin && python3 -c "import sys;sys.path.insert(0,'native/luaenc');import pack;\
-open('/tmp/d.bin','wb').write(pack.decrypt(open('/tmp/e.bin','rb').read(),pack.load_key()))" && diff /tmp/d.bin X.lua
-# host lua 完整链路（CI 同款）：构建 → strip 编译 → 加密 → 校验
-make -C androlua/src/main/jni/lua all MYCFLAGS="-std=c99 -D_GNU_SOURCE -DLUA_USE_LINUX" MYLIBS="-ldl"
-python3 native/luaenc/pack.py enc-apk app.apk app-enc.apk --lua androlua/src/main/jni/lua/lua
-python3 native/luaenc/pack.py verify-apk app-enc.apk
+python3 native/luaenc/pack.py enc-file input.lua encrypted.lua
+python3 native/luaenc/pack.py enc-apk input.apk output.apk \
+  --lua androlua/src/main/jni/lua/lua
+python3 native/luaenc/pack.py verify-apk output.apk \
+  --lua androlua/src/main/jni/lua/lua
 ```
 
-## 换密钥 / 换 opcode 映射
+`enc-apk` 在目标同目录临时写包，完整校验成功后原子替换目标；输入输出可以同名。
+失败时保留原文件并清理临时文件。保留其他条目内容、压缩方式、注释和元数据；
+ZIP 偏移会变化，**必须在改写后重新 zipalign，再签名**。
+含重名 ZIP 条目或已有 v1/v2/v3 签名的 APK 会被拒绝。
 
-- **换密钥 / 换拆分**：跑 `python3 native/luaenc/gen_key.py`（`--seed N` 可复现）
-  重新生成 `luaenc.c` 的 6 张表（A/B/C/R/P/W）。不带参数时保持现有密钥值不变、
-  只换一套混淆拆分；该脚本据目标密钥反解、**绝不打印明文**，`pack.py` 自动读到
-  新表。改后必须重编 `libluajava.so` 并重新出包，旧包与新表不兼容。
-- **换 opcode 映射**：`python3 native/luaenc/gen_opcodes.py --seed N` 换种子
-  重排；同样必须重编 so 并出包。同版本发布即可，无历史兼容包袱。
+`verify-apk` 总会校验完整性；带 `--lua` 时还用 C 加载入口逐个解密、解析，
+不执行脚本。因此它不能代替 Android 真机上的 API、界面及依赖验证。
 
-## 如何加固（可选，按需）
+本地 `assembleRelease` 自动执行 `encryptReleaseLua`，Python、加密、校验或
+替换失败均使任务失败。可用 `-PluaencPython=/path/to/python`、
+`-PluaencLua=/path/to/project/lua` 指定工具；显式指定不存在的 Lua 会报错。
+默认未找到 host Lua 时会明确提示并使用源码加密，仍必须通过 v2 认证校验。
+CI 先重新构建 host Lua 并运行集成测试，随后编译字节码、加密、解析校验，最后签名。
 
-- 把密文本身也 `xxd -i` 进 `.so`，APK 里连密文文件都没有。
-- 密钥拆成多段、运行时拼接 / 从设备指纹派生，抬高静态取密钥的成本。
-- 关键脚本改走服务端下发 + 一次性 token，才是质变。
+## 回归验证
+
+```bash
+python3 native/luaenc/pack.py selftest
+python3 native/luaenc/gen_key.py --check
+cc -std=c99 -D_GNU_SOURCE -O2 -DLUAENC_TEST_MAIN \
+  androlua/src/main/jni/lua/luaenc.c -o /tmp/luaenc-test
+python3 native/luaenc/test_pack.py \
+  --lua androlua/src/main/jni/lua/lua --codec /tmp/luaenc-test
+```
+
+覆盖 AES-256 标准答案、Python/C 双向交叉校验、空脚本和多种长度、认证字段及
+载荷篡改、截断、追加、错误密钥、旧格式迁移、文件/缓冲加载、`require`、
+编译不执行业务代码、加载模式、嵌套密文拒绝、签名保护、同名输出、
+失败后文件保留和 ZIP 元数据保留。自测日志不输出主密钥或密钥片段。

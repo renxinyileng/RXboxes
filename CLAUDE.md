@@ -47,8 +47,8 @@ Java 只提供壳与 JNI 桥。两个 Gradle 模块：
 
 - `.lua` 源码在仓库里**始终明文**（可读、可 diff）；加密只在打包时对 APK 的
   zip 条目改写，只动 `.lua`，`.so`/manifest/resources 逐字节不变。
-- 密文格式：`nonce[8] + tag[8] + ct`，**无明文魔数**（对没密钥的人与随机字节
-  不可区分）。`tag = SHA256(KEY||nonce)[:8]` 只作检测/校验。
+- 密文使用 v2：`magic[8] + nonce[12] + HMAC-SHA256[32] + ct`；分别派生 AES
+  与认证子密钥，完整认证后才解密。旧格式只读兼容，重新打包自动迁移 v2。
 - 密码算法 **AES-256-CTR**：设备端 `luaenc.c` 自带一份 AES-256，打包端
   `pack.py` 用等价的**纯 Python** AES-256（**不要**引 `cryptography`——其
   `_cffi_backend` 在部分环境缺失）。两端过 FIPS-197 KAT + C↔Python round-trip 对齐。
@@ -66,9 +66,11 @@ Java 只提供壳与 JNI 桥。两个 Gradle 模块：
 **改 luaenc.c 或 pack.py 后必做的自检**（两端漂移会静默出坏包）：
 
 ```bash
-python3 native/luaenc/pack.py selftest              # AES round-trip
+python3 native/luaenc/pack.py selftest              # AES 已知答案、往返与篡改拒绝
 make -C androlua/src/main/jni/lua all MYCFLAGS="-std=c99 -D_GNU_SOURCE -DLUA_USE_LINUX" MYLIBS="-ldl"
-# 然后 enc-apk --lua + verify-apk（CI 的“加密 Lua 脚本”步骤同款）
+cc -std=c99 -D_GNU_SOURCE -DLUAENC_TEST_MAIN androlua/src/main/jni/lua/luaenc.c -o /tmp/luaenc-test
+python3 native/luaenc/test_pack.py --lua androlua/src/main/jni/lua/lua --codec /tmp/luaenc-test
+# 然后 enc-apk --lua + verify-apk --lua（CI 同款）；失败必须中止发布。
 ```
 
 ### host lua 构建的坑（已在 makefile / android.yml 修好，别回退）
