@@ -176,15 +176,15 @@ function 弹窗UI(标题, 内容, 确认事件, 取消事件, 按钮1, 按钮2, 
 end
 
 function 提示(text)
-    Toast.makeText(activity, text, Toast.LENGTH_SHORT).show()
+    Toast.makeText(activity.getApplicationContext(), text, Toast.LENGTH_SHORT).show()
 end
 
 function 无网络()
-    Toast.makeText(activity, "无法连接至服务器", Toast.LENGTH_SHORT).show()
+    Toast.makeText(activity.getApplicationContext(), "无法连接至服务器", Toast.LENGTH_SHORT).show()
 end
 
 function 服务器禁止通讯()
-    Toast.makeText(activity, "服务器禁止通讯", Toast.LENGTH_SHORT).show()
+    Toast.makeText(activity.getApplicationContext(), "服务器禁止通讯", Toast.LENGTH_SHORT).show()
 end
 
 function GetAppInfo(包名)

@@ -1,11 +1,12 @@
 local require=require
 local table=require "table"
-luajava.ids=luajava.ids or {id=0x7f000000}
+luajava.ids=luajava.ids or {}
 local ids = luajava.ids
 local _G=_G
 local insert = table.insert
 local new = luajava.new
 local bindClass = luajava.bindClass
+local View=bindClass("android.view.View")
 local LuaDrawable=luajava.bindClass "com.androlua.LuaDrawable"
 local loadbitmap=require "loadbitmap"
 
@@ -13,8 +14,7 @@ local function loadmenu(menu,t,root,n)
     root=root or _G
     n=n or 0
     for k,v in ipairs(t) do
-      local id=ids.id
-      ids.id=ids.id+1
+      local id=View.generateViewId()
       if v[1]== MenuItem then
         local item=menu.add(v.group or 0,id,v.order or 0,v.title)
         if v.id then

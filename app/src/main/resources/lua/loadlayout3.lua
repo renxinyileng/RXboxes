@@ -32,7 +32,7 @@ local W = outMetrics.widthPixels;
 local H = outMetrics.heightPixels;
 
 local dm=context.getResources().getDisplayMetrics()
-local id=0x7f000000
+local View=luajava.bindClass("android.view.View")
 local toint={
   --android:drawingCacheQuality
   auto=0,
@@ -566,7 +566,7 @@ local function loadlayout(t,root,group)
       end
     elseif k=="id" then --创建view的全局变量
       rawset(root,v,view)
-      id=id+1
+      local id=View.generateViewId()
       view.setId(id)
       ids[v]=id
 

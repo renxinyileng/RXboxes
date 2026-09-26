@@ -11,10 +11,7 @@ android {
         targetSdk rootProject.ext.target_sdk
         versionCode 20260807
         versionName "1.0.3正式版"
-        // 注意:AndroLua 的 LuaApplication.updateAssets() 只在 versionName 变化时
-        // 才把 APK 内 assets 重新解压到 files 目录。改过 assets 下的 lua 脚本后
-        // 必须递增 versionName(建议同步递增 versionCode),否则设备上会一直
-        // 运行旧脚本,出现 "cannot find 某类" 之类的诡异错误。
+        // LuaApplication 按版本名和安装更新时间刷新脚本，同版本覆盖安装也生效。
     }
 
     compileOptions {
@@ -97,93 +94,4 @@ dependencies {
     implementation "com.squareup.okhttp3:okhttp:$rootProject.ext.okhttp_version"
 }
 
-// ---------------------------------------------------------------------------
-// 本地打包自动加密 Lua 脚本
-//
-// assembleRelease 之后，对产出的 release APK 把所有 .lua 条目改写成密文
-//（用 native/luaenc/pack.py，与 CI、与设备端 luaenc.c 同算法同密钥）。
-// 选在 APK 层做而不是 sourceSet 层：构建 app 时 AGP 会把 androlua 模块的
-// resources/lua 也并进最终 APK，只有在 APK 层改写才能把各模块的 .lua 一网打尽。
-//
-// Gradle 9 已移除 Project.exec / Task.exec，命令行只能走注入的 ExecOperations，
-// 所以这里用带 @Inject 的自定义任务类型，而不是 tasks.register{ doLast{ exec{} } }。
-//
-// 加密或校验失败必须让构建失败；临时 APK 通过 verify-apk 后才能替换原文件。
-// 已签名包会被 pack.py 拒绝，需按“未签名包→加密→签名”的顺序发布。
-// Python 和 host lua 可通过 -PluaencPython=... / -PluaencLua=... 指定。
-//
-// CI 里不跑本 task：android.yml 有专门的一步，会先构建 host lua 把 .lua
-// strip 编译成字节码再加密（更强）。检测到 CI=true 直接跳过，交给 CI 的
-// 专用步骤。本地则尽量也走字节码：若 host lua
-// 已编出（androlua/src/main/jni/lua/lua 存在）就传 --lua，否则退化为文本加密。
-abstract class EncryptReleaseLuaTask extends DefaultTask {
-    @javax.inject.Inject abstract org.gradle.process.ExecOperations getExecOps()
-
-    @Internal abstract Property<String> getPackPyPath()
-    @Internal abstract Property<String> getApkDirPath()
-    @Internal abstract Property<String> getLuaExePath()
-    @Internal abstract Property<String> getPythonExe()
-    @Internal abstract Property<Boolean> getLuaExplicitlyConfigured()
-
-    @TaskAction
-    void run() {
-        if (System.getenv("CI") == "true") {
-            logger.lifecycle("luaenc: CI 环境，跳过（由 android.yml 的字节码加密步骤处理）")
-            return
-        }
-        def packPy = new File(packPyPath.get())
-        def apkDir = new File(apkDirPath.get())
-        if (!packPy.isFile()) throw new GradleException("luaenc: 找不到加密工具 ${packPy}")
-        if (!apkDir.isDirectory()) throw new GradleException("luaenc: 找不到 release 目录 ${apkDir}")
-        def apks = apkDir.listFiles()?.findAll { it.name.endsWith(".apk") } ?: []
-        if (apks.isEmpty()) throw new GradleException("luaenc: release 目录下没有 APK")
-        def luaExe = new File(luaExePath.get())
-        def useBytecode = luaExe.isFile()
-        if (!useBytecode && luaExplicitlyConfigured.get()) {
-            throw new GradleException("luaenc: 指定的 host lua 不存在：${luaExe}")
-        }
-        if (useBytecode) {
-            logger.lifecycle("luaenc: 使用 host lua 编译无调试信息的字节码，并校验解密后的加载")
-        } else {
-            logger.warn("luaenc: 未找到 host lua（${luaExe}），本次仅加密源码；不会生成字节码，也无法校验 Lua 加载。发布前建议构建本仓库 host lua，或用 -PluaencLua 指定其路径。")
-        }
-        apks.each { apk ->
-            def tmp = java.nio.file.Files.createTempFile(apk.parentFile.toPath(), apk.name + ".", ".enc.tmp")
-            try {
-                def luaArgs = useBytecode ? ["--lua", luaExe.absolutePath] : []
-                execOps.exec { spec ->
-                    spec.commandLine([pythonExe.get(), packPy.absolutePath, "enc-apk",
-                                      apk.absolutePath, tmp.toString()] + luaArgs)
-                }.assertNormalExitValue()
-                execOps.exec { spec ->
-                    spec.commandLine([pythonExe.get(), packPy.absolutePath, "verify-apk",
-                                      tmp.toString()] + luaArgs)
-                }.assertNormalExitValue()
-                // 同目录替换，避免先删除原 APK；不支持原子移动的文件系统用普通替换。
-                try {
-                    java.nio.file.Files.move(tmp, apk.toPath(),
-                        java.nio.file.StandardCopyOption.ATOMIC_MOVE,
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-                } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
-                    java.nio.file.Files.move(tmp, apk.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-                }
-                logger.lifecycle("luaenc: 已加密并校验 ${apk.name}")
-            } catch (Exception failure) {
-                throw new GradleException("luaenc: ${apk.name} 加密或校验失败，禁止发布；请检查 Python、host lua 和 APK 签名状态。", failure)
-            } finally {
-                java.nio.file.Files.deleteIfExists(tmp)
-            }
-        }
-    }
-}
-tasks.register("encryptReleaseLua", EncryptReleaseLuaTask) {
-    description = "把 release APK 内的 .lua 改写成密文（本地打包自动加密）"
-    packPyPath.set("${rootProject.projectDir}/native/luaenc/pack.py".toString())
-    apkDirPath.set(layout.buildDirectory.dir("outputs/apk/release").get().asFile.absolutePath)
-    pythonExe.set(providers.gradleProperty("luaencPython").orElse("python3"))
-    luaExePath.set(providers.gradleProperty("luaencLua")
-        .map { rootProject.file(it).absolutePath }
-        .orElse("${rootProject.projectDir}/androlua/src/main/jni/lua/lua".toString()))
-    luaExplicitlyConfigured.set(providers.gradleProperty("luaencLua").isPresent())
-}
-tasks.matching { it.name == "assembleRelease" }.configureEach { finalizedBy("encryptReleaseLua") }
+apply from: rootProject.file('gradle/lua-encryption.gradle')

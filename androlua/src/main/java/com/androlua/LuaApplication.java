@@ -207,12 +207,16 @@ public class LuaApplication extends Application implements LuaContext {
 
     private void updateAssets() {
         try {
-            String ver = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            String ver = info.versionName;
             String old = mSharedPreferences.getString("versionName", "");
-            if (!ver.equals(old)) {
+            // adb install -r can replace scripts without changing versionName.
+            long lastExtractedUpdate = mSharedPreferences.getLong("luaAssetsUpdateTime", -1L);
+            if (!ver.equals(old) || lastExtractedUpdate != info.lastUpdateTime) {
                 unApk("assets", localDir);
                 unApk("lua", luaMdDir);
-                mSharedPreferences.edit().putString("versionName", ver).apply();
+                mSharedPreferences.edit().putString("versionName", ver)
+                        .putLong("luaAssetsUpdateTime", info.lastUpdateTime).apply();
             }
         } catch (Exception e) {
             e.printStackTrace();

@@ -418,10 +418,10 @@ layout = {
                 layout_width = "match_parent";
                 layout_weight = "1";
                 orientation = "vertical";
-                layout_height = "100%h"; --输入fill可能会出现白条
+                layout_height = "0dp";
                 { PageView;
                   layout_width = "match_parent";
-                  layout_weight = "match_parent";
+                  layout_height = "match_parent";
                   id = "pagev";
                 }
             },
@@ -430,7 +430,7 @@ layout = {
             LinearLayout;
             layout_gravity = "left";
             layout_width = "60%w";
-            BackgroundColor = "#00000000";
+            background = "#FFFBFA";
             id = "左侧滑";
             layout_height = "fill";
             orientation = "vertical";
@@ -447,8 +447,8 @@ layout = {
                     layout_marginTop = "5%h";
                     layout_gravity = "center";
                     id = "lookbook";
-                    TextSize = "8sp";
-                    TextColor = "0xFF000000";
+                    textSize = "18sp";
+                    textColor = "#FF000000";
                     text = "Look Book";
 
                 };
@@ -457,8 +457,8 @@ layout = {
                     layout_marginTop = "5%h";
                     layout_gravity = "center";
                     id = "readcomics";
-                    TextSize = "8sp";
-                    TextColor = "0xFF000000";
+                    textSize = "18sp";
+                    textColor = "#FF000000";
                     text = "Read Comics";
                 };
             },
@@ -474,7 +474,7 @@ pagev.setAdapter(adp)
 adp.add(loadlayout(page5))
 adp.add(loadlayout(page1))
 adp.add(loadlayout(page2))
-Drawer.setScrimColor(0)
+Drawer.setScrimColor(0x66000000)
 --page1运行配置
 function search()
     local keyword = search_box.Text
@@ -666,9 +666,11 @@ btn3.onClick = function()
 end
 --左侧滑配置
 lookbook.onClick = function()
+    Drawer.closeDrawers()
     activity.newActivity("Pen_fun_Pavilion/Pen_fun_Pavilion")
 end
 readcomics.onClick = function()
+    Drawer.closeDrawers()
     activity.newActivity("read_comics/read_comics")
 end
 --page5运行配置

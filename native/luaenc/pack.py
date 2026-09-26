@@ -239,7 +239,28 @@ def run_lua_helper(lua_exe, script, *args):
     """
     return subprocess.run(
         [str(lua_exe), "-E", "-", *(str(arg) for arg in args)],
-        input=script, capture_output=True, text=True)
+        input=script, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=60)
+
+
+def enc_file(src, dst, key):
+    """同目录临时写入并认证后替换，失败不破坏源文件或已有目标。"""
+    data = encrypt(pathlib.Path(src).read_bytes(), key)
+    dst = pathlib.Path(dst)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                prefix=dst.name + ".", suffix=".tmp", dir=dst.parent,
+                delete=False) as handle:
+            temporary = pathlib.Path(handle.name)
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _verify_v2(temporary.read_bytes(), key)
+        os.replace(temporary, dst)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
 
 
 def strip_compile(lua_exe, src, dst):
@@ -337,6 +358,7 @@ def verify_apk(apk, key, lua_exe=None):
     仅解析而不执行，不能验证 Android API 等运行时依赖。
     """
     total = 0
+    nonces = {}
     with zipfile.ZipFile(apk, "r") as z:
         _check_archive(z)
         for item in z.infolist():
@@ -351,6 +373,15 @@ def verify_apk(apk, key, lua_exe=None):
                 pt = decrypt(data, key)
             except ValueError as error:
                 raise SystemExit(f"::error::{name}: {error}") from error
+            # CTR 在同一密钥下复用 nonce 会泄露两份明文的异或。
+            # 相同密文的复制不增加泄露，允许多个路径引用同一加密脚本。
+            nonce = data[len(MAGIC):len(MAGIC) + NONCE_LEN]
+            fingerprint = hashlib.sha256(data).digest()
+            previous = nonces.get(nonce)
+            if previous is not None and previous[0] != fingerprint:
+                raise SystemExit(
+                    f"::error::{name} 与 {previous[1]} 复用 nonce，但密文不同")
+            nonces[nonce] = (fingerprint, name)
             if pt.startswith(PREFIX) or is_encrypted(pt, key):
                 raise SystemExit(f"::error::{name} 解密后仍像密文（重复加密？）")
             if lua_exe:
@@ -405,8 +436,7 @@ def main(argv):
     if cmd == "enc-file":
         if len(argv) != 4:
             raise SystemExit("用法：pack.py enc-file <in> <out>")
-        data = pathlib.Path(argv[2]).read_bytes()
-        pathlib.Path(argv[3]).write_bytes(encrypt(data, key))
+        enc_file(argv[2], argv[3], key)
         print(f"加密 {argv[2]} -> {argv[3]}"); return 0
     if cmd in ("enc-apk", "verify-apk"):
         lua_exe = None

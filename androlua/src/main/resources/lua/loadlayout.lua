@@ -1,7 +1,7 @@
 local require=require
 local luajava = luajava
 local table=require "table"
-luajava.ids=luajava.ids or {id=0x7f000000}
+luajava.ids=luajava.ids or {}
 local ids = luajava.ids
 local _G=_G
 local insert = table.insert
@@ -63,7 +63,7 @@ table.insert(package.searchers,alyloader)
 
 
 local dm=context.getResources().getDisplayMetrics()
-local id=0x7f000000
+local View=bindClass("android.view.View")
 local toint={
   --android:drawingCacheQuality
   auto=0,
@@ -647,8 +647,7 @@ local function loadlayout(t,root,group)
       end
     elseif k=="id" then --创建view的全局变量
       rawset(root,v,view)
-      local id=ids.id
-      ids.id=ids.id+1
+      local id=View.generateViewId()
       view.setId(id)
       ids[v]=id
 
