@@ -1,0 +1,99 @@
+import groovy.json.JsonOutput
+
+// Transform build inputs, so every APK/AAB consumer receives ciphertext before signing.
+abstract class LuaEncryptionTask extends DefaultTask {
+    @javax.inject.Inject abstract org.gradle.process.ExecOperations getExecOps()
+    @javax.inject.Inject abstract org.gradle.api.file.FileSystemOperations getFileOps()
+    @InputFile @PathSensitive(PathSensitivity.NONE) abstract RegularFileProperty getDriver()
+    @InputFile @PathSensitive(PathSensitivity.NONE) abstract RegularFileProperty getPackScript()
+    @InputFile @PathSensitive(PathSensitivity.NONE) abstract RegularFileProperty getKeySource()
+    @Input abstract Property<String> getPythonExe()
+    @Optional @InputFile @PathSensitive(PathSensitivity.NONE) abstract RegularFileProperty getHostLua()
+
+    void encrypt(List<File> directories, List<File> jars, File output, String kind) {
+        def manifest = new File(temporaryDir, 'inputs.json')
+        manifest.setText(JsonOutput.toJson([
+            directories: directories.collect { it.absolutePath },
+            jars: jars.collect { it.absolutePath }
+        ]), 'UTF-8')
+        def args = [pythonExe.get(), driver.get().asFile.absolutePath,
+                    manifest.absolutePath, output.absolutePath, '--kind', kind]
+        if (hostLua.isPresent()) args += ['--lua', hostLua.get().asFile.absolutePath]
+        execOps.exec { spec ->
+            spec.environment('PYTHONUTF8', '1')
+            spec.environment('PYTHONDONTWRITEBYTECODE', '1')
+            spec.commandLine(args)
+        }.assertNormalExitValue()
+    }
+}
+
+abstract class EncryptLuaAssets extends LuaEncryptionTask {
+    @InputDirectory @PathSensitive(PathSensitivity.RELATIVE) abstract DirectoryProperty getInputDirectory()
+    @OutputDirectory abstract DirectoryProperty getOutputDirectory()
+    @TaskAction void run() {
+        def output = outputDirectory.get().asFile
+        // Only this task's generated output is removed, never the source tree.
+        fileOps.delete { delete(output) }
+        encrypt([inputDirectory.get().asFile], [], output, 'directory')
+    }
+}
+
+abstract class EncryptLuaResources extends LuaEncryptionTask {
+    @InputFiles @PathSensitive(PathSensitivity.RELATIVE) abstract ListProperty<RegularFile> getInputJars()
+    @InputFiles @PathSensitive(PathSensitivity.RELATIVE) abstract ListProperty<Directory> getInputDirectories()
+    @OutputFile abstract RegularFileProperty getOutputJar()
+    @TaskAction void run() {
+        encrypt(inputDirectories.get().collect { it.asFile },
+                inputJars.get().collect { it.asFile }, outputJar.get().asFile, 'jar')
+    }
+}
+
+def python = providers.gradleProperty('luaencPython').orElse(
+    System.getProperty('os.name').toLowerCase().contains('windows') ? 'python' : 'python3')
+def explicitLua = providers.gradleProperty('luaencLua')
+def defaultLua = rootProject.file('androlua/src/main/jni/lua/' +
+    (System.getProperty('os.name').toLowerCase().contains('windows') ? 'lua.exe' : 'lua'))
+// Applied scripts have their own compile classpath; obtain AGP types from its plugin.
+def androidPlugin = plugins.findPlugin('com.android.application') ?: plugins.getPlugin('com.android.library')
+def agpLoader = androidPlugin.class.classLoader
+def assetsArtifact = agpLoader.loadClass('com.android.build.api.artifact.SingleArtifact$ASSETS').INSTANCE
+def javaResourcesArtifact = agpLoader.loadClass('com.android.build.api.artifact.ScopedArtifact$JAVA_RES').INSTANCE
+// AGP 9.3 keeps processJavaRes output outside ScopedArtifact.JAVA_RES.
+// This adapter is version-sensitive: verify resource counts when upgrading AGP.
+def sourceResourcesArtifact = agpLoader.loadClass('com.android.build.gradle.internal.scope.InternalArtifactType$JAVA_RES').INSTANCE
+def projectScope = agpLoader.loadClass('com.android.build.api.variant.ScopedArtifacts$Scope').enumConstants.find { it.name() == 'PROJECT' }
+
+tasks.withType(LuaEncryptionTask).configureEach {
+    driver.set(rootProject.layout.projectDirectory.file('native/luaenc/build_inputs.py'))
+    packScript.set(rootProject.layout.projectDirectory.file('native/luaenc/pack.py'))
+    keySource.set(rootProject.layout.projectDirectory.file('androlua/src/main/jni/lua/luaenc.c'))
+    pythonExe.set(python)
+    if (explicitLua.isPresent()) hostLua.set(rootProject.file(explicitLua.get()))
+    else if (defaultLua.isFile()) hostLua.set(defaultLua)
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        def suffix = variant.name.capitalize()
+        def assetsTask = tasks.register("encrypt${suffix}LuaAssets", EncryptLuaAssets)
+        variant.artifacts.use(assetsTask)
+            .wiredWithDirectories({ it.inputDirectory }, { it.outputDirectory })
+            .toTransform(assetsArtifact)
+        def sourceResourcesTask = tasks.register("encrypt${suffix}LuaResources", EncryptLuaAssets) {
+            inputDirectory.set(tasks.named("process${suffix}JavaRes").flatMap { it.outDirectory })
+        }
+        variant.artifacts.use(sourceResourcesTask)
+            .wiredWith({ it.outputDirectory })
+            .toCreate(sourceResourcesArtifact)
+        def resourcesTask = tasks.register("encrypt${suffix}LuaGeneratedResources", EncryptLuaResources)
+        variant.artifacts.forScope(projectScope).use(resourcesTask)
+            .toTransform(javaResourcesArtifact,
+                { it.inputJars }, { it.inputDirectories }, { it.outputJar })
+        // AGP 9.3's incremental merger can retain stale entries when encrypted
+        // resource directories are replaced ("Unknown file: lua/..."). Force
+        // a full merge; encryption tasks themselves still remain incremental.
+        tasks.matching { it.name == "merge${suffix}JavaResource" }.configureEach {
+            outputs.upToDateWhen { false }
+        }
+    }
+}

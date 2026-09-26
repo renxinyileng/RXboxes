@@ -6,7 +6,7 @@ local new = luajava.new
 local bindClass = luajava.bindClass
 local ids = {}
 local ltrs = {}
-local id = 0x7f000000
+local View = luajava.bindClass("android.view.View")
 
 local context = activity or service
 
@@ -597,7 +597,7 @@ local function loadlayout(t, root, group,p)
         elseif k == "id" then
             --创建view的全局变量
             rawset(root, v, view)
-            id = id + 1
+            local id = View.generateViewId()
             view.setId(id)
             ids[v] = id
         else

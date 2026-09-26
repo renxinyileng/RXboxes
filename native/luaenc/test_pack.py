@@ -342,9 +342,21 @@ assert(not load(data, 'nested'))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--lua", required=True, help="Lua built from this repository")
+    parser.add_argument("--lua", help="Lua built from this repository")
     parser.add_argument("--codec", required=True, help="luaenc.c with LUAENC_TEST_MAIN")
+    parser.add_argument("--codec-only", action="store_true",
+                        help="Run Python/C protocol checks without a host Lua")
     arguments = parser.parse_args()
-    PackagingTests.lua_exe = str(pathlib.Path(arguments.lua).resolve())
+    if not arguments.codec_only and not arguments.lua:
+        parser.error("--lua is required unless --codec-only is used")
+    if arguments.lua:
+        PackagingTests.lua_exe = str(pathlib.Path(arguments.lua).resolve())
     PackagingTests.codec_exe = str(pathlib.Path(arguments.codec).resolve())
-    unittest.main(argv=[__file__], verbosity=2)
+    selected = [__file__]
+    if arguments.codec_only:
+        selected += ["PackagingTests." + name for name in (
+            "test_python_and_c_encryption_agree",
+            "test_v2_authenticates_every_header_and_payload_byte",
+            "test_truncation_extension_and_wrong_key_are_rejected",
+        )]
+    unittest.main(argv=selected, verbosity=2)

@@ -1,8 +1,9 @@
 # Lua 脚本加密
 
-源码在仓库中保持明文；发布时把 APK 内所有 `.lua` 条目改为密文，运行时由
-`luaL_loadfilex` / `luaL_loadbufferx` 在内存中认证、解密并加载。
-Debug 包保留明文，Release 包加密失败会使构建失败。
+源码在仓库中保持明文；Gradle 在打包及签名前自动加密两个模块的 assets 和
+Java resources 中的 `.lua`。Debug、Release、APK、AAB 均启用，CI 不跳过。
+运行时由 `luaL_loadfilex` / `luaL_loadbufferx` 在内存中认证、解密并加载。
+加密任务是打包输入的必需依赖，失败会阻止打包。
 
 ## v2 认证加密格式
 
@@ -57,7 +58,8 @@ AES 轮密钥用完擦除；每个文件只展开一次 AES 轮密钥。
 | `androlua/src/main/jni/lua/lauxlib.c` | 文件及内存加载前的认证解密 |
 | `native/luaenc/pack.py` | 加密、旧格式迁移、无调试信息字节码编译、APK 校验 |
 | `native/luaenc/test_pack.py` | Python/C 一致性、篡改拒绝、实际 Lua 加载与打包回归 |
-| `app/build.gradle` | 本地 Release 加密任务 |
+| `gradle/lua-encryption.gradle` | 两个模块所有变体的打包输入转换任务 |
+| `native/luaenc/build_inputs.py` | 加密 assets 目录和 Java resources，保留其他资源内容 |
 | `.github/workflows/android.yml` | 同源 host Lua 构建、集成测试、签名前加密与校验 |
 
 `doFile`、`require`、`dofile`、`loadfile` 最终经过文件加载钩子；
@@ -103,29 +105,52 @@ python3 native/luaenc/pack.py verify-apk output.apk \
 ```
 
 `enc-apk` 在目标同目录临时写包，完整校验成功后原子替换目标；输入输出可以同名。
+`enc-file` 同样先写临时文件、刷盘并认证，再替换目标；写入或替换失败保留原文件。
 失败时保留原文件并清理临时文件。保留其他条目内容、压缩方式、注释和元数据；
 ZIP 偏移会变化，**必须在改写后重新 zipalign，再签名**。
 含重名 ZIP 条目或已有 v1/v2/v3 签名的 APK 会被拒绝。
+校验还会拒绝同一个 nonce 对应不同密文的 APK，避免 CTR 密钥流复用；
+多个路径保存完全相同的加密脚本仍被允许。检查范围是单个 APK，不能检测跨包复用。
+host Lua 辅助进程使用 UTF-8 输入输出，每次最多等待 60 秒，超时使打包失败并清理临时包。
 
 `verify-apk` 总会校验完整性；带 `--lua` 时还用 C 加载入口逐个解密、解析，
 不执行脚本。因此它不能代替 Android 真机上的 API、界面及依赖验证。
 
-本地 `assembleRelease` 自动执行 `encryptReleaseLua`，Python、加密、校验或
-替换失败均使任务失败。可用 `-PluaencPython=/path/to/python`、
-`-PluaencLua=/path/to/project/lua` 指定工具；显式指定不存在的 Lua 会报错。
-默认未找到 host Lua 时会明确提示并使用源码加密，仍必须通过 v2 认证校验。
-CI 先重新构建 host Lua 并运行集成测试，随后编译字节码、加密、解析校验，最后签名。
+本地正常运行 `gradlew.bat assembleDebug`、`gradlew.bat assembleRelease` 或
+`gradlew.bat bundleRelease` 即会自动加密，无须再手动运行 `enc-apk`。
+Android Studio 构建也通过同一套 Gradle 依赖执行，签名覆盖的是加密后的内容。
+生成的中间密文位于各模块 `build/intermediates` 下；不要直接修改这些文件。
+
+集成使用 AGP 的 `SingleArtifact.ASSETS` 与项目范围 `ScopedArtifact.JAVA_RES`
+转换接口；源码 resources 另外接入 `process<Variant>JavaRes` 的输出替换。
+该适配使用 AGP 9.3.1 的内部 `JAVA_RES` artifact，升级 AGP 后必须重新验证任务
+依赖和脚本数量。两个模块均注册，涵盖当前仓库的脚本来源。外部依赖自带的 Java
+resources 不在项目范围转换内；CI 对最终 APK 的全量检查会拦截遗漏的明文 Lua。
+AGP 9.3 的 Java 资源增量合并在密文目录替换后会出现 `Unknown file: lua/...`；
+此处强制该合并步骤完整执行，加密任务仍保留增量检查。
+参考：[AGP artifact API](https://developer.android.com/reference/tools/gradle-api/9.3/com/android/build/api/artifact/SingleArtifact)。
+
+可用 `-PluaencPython=/path/to/python`、`-PluaencLua=/path/to/project/lua` 指定工具。
+Windows 默认使用 `python`，其他平台默认使用 `python3`。显式指定不存在的 Lua
+会使任务失败。默认未找到同源 host Lua 时直接加密源码；找到时先生成无调试信息
+的字节码再加密。CI 在 Gradle 构建前编译同源 host Lua，并在打包后逐个认证和解析
+最终 APK 中的 Lua。常规构建不再改写已生成的 APK，因此不会破坏其签名和 ZIP 对齐。
 
 ## 回归验证
 
 ```bash
 python3 native/luaenc/pack.py selftest
+python3 native/luaenc/test_pack_unit.py
 python3 native/luaenc/gen_key.py --check
 cc -std=c99 -D_GNU_SOURCE -O2 -DLUAENC_TEST_MAIN \
   androlua/src/main/jni/lua/luaenc.c -o /tmp/luaenc-test
 python3 native/luaenc/test_pack.py \
   --lua androlua/src/main/jni/lua/lua --codec /tmp/luaenc-test
 ```
+
+没有同源 host Lua 时，可用 `test_pack.py --codec /path/to/luaenc-test --codec-only`
+单独运行 Python/C 一致性、篡改和截断拒绝检查。它不验证 Lua 加载或 Android 运行。
+Windows 下 C 测试程序已将标准输入输出设为二进制，避免 CR/LF 转换及 `0x1a` 截断。
 
 覆盖 AES-256 标准答案、Python/C 双向交叉校验、空脚本和多种长度、认证字段及
 载荷篡改、截断、追加、错误密钥、旧格式迁移、文件/缓冲加载、`require`、

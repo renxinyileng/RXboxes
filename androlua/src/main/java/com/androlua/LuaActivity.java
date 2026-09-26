@@ -876,9 +876,17 @@ public class LuaActivity extends Activity implements LuaBroadcastReceiver.OnRece
     public void unregisterReceiver(BroadcastReceiver receiver) {
         try{
             super.unregisterReceiver(receiver);
-        } catch (Exception e){
-            Log.i("lua", "unregisterReceiver: "+receiver);
-            e.printStackTrace();
+        } catch (IllegalArgumentException e) {
+            // Oplus popup/Toast cleanup sometimes unregisters a receiver owned by
+            // another context. Only this known, already-cleaned-up case is benign.
+            if (receiver != null
+                    && receiver.getClass().getName().startsWith("android.view.OplusScrollToTopManager$")
+                    && e.getMessage() != null
+                    && e.getMessage().startsWith("Receiver not registered:")) {
+                Log.d("LuaActivity", "Ignoring duplicate Oplus window receiver cleanup");
+                return;
+            }
+            throw e;
         }
      }
 
@@ -1847,7 +1855,9 @@ public class LuaActivity extends Activity implements LuaBroadcastReceiver.OnRece
         long now = System.currentTimeMillis();
         if (toast == null || now - lastShow > 1000) {
             toastbuilder.setLength(0);
-            toast = Toast.makeText(this, text, Toast.LENGTH_LONG);
+            if (toast != null) toast.cancel();
+            // Toast may outlive the Activity; keep its window/receiver context independent.
+            toast = Toast.makeText(getApplicationContext(), text, Toast.LENGTH_LONG);
             toastbuilder.append(text);
             toast.show();
         } else {

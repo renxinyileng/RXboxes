@@ -471,6 +471,10 @@ cleanup:
 /* -------- 仅宿主机测试用：加密 + 命令行自测，绝不参与 ndk 构建 -------- */
 #ifdef LUAENC_TEST_MAIN
 #include <stdio.h>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 static unsigned char *enc(const unsigned char *pt, size_t n,
                           const unsigned char nonce[LUAENC_NONCE_LEN], size_t *outn) {
@@ -501,6 +505,11 @@ int main(int argc, char **argv) {
     unsigned char *buf = NULL, *out;
     size_t cap = 0, n = 0, outn = 0;
     int ch, status = 1;
+#ifdef _WIN32
+    /* Windows 文本流会转换 CR/LF，并把 0x1a 当作 EOF；密文必须逐字节传输。 */
+    if (_setmode(_fileno(stdin), _O_BINARY) == -1 ||
+        _setmode(_fileno(stdout), _O_BINARY) == -1) return 1;
+#endif
     while ((ch = getchar()) != EOF) {
         if (n == cap) {
             size_t next = cap ? cap * 2 : 4096;
