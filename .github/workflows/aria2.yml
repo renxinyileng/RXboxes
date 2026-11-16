@@ -146,7 +146,7 @@ jobs:
             echo "so 无变化，不提交"
             exit 0
           fi
-          git -c user.name="Claude" -c user.email="noreply@anthropic.com" \
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             commit -m "build(aria2): 更新 libaria2jni.so（引擎 ${{ github.event.inputs.publish }}）" \
                    -m "来自 ${{ github.sha }} 的构建产物。"
           git push origin "HEAD:${{ github.ref_name }}"
